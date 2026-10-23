@@ -1,0 +1,7 @@
+[project]
+name = "infrastructure"
+type = "package"
+filter = "@nextnode-solutions/infrastructure"
+
+[scripts]
+test = false

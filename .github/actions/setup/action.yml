@@ -1,0 +1,84 @@
+# Shared setup for all NextNode pipeline jobs.
+#
+# Two modes controlled by inputs:
+#   - "infra" mode: checks out this repository into .infra/ so the job can run
+#     the pipeline CLI (node src/index.ts). Node 24 strips types natively, so
+#     no runtime loader is needed. The install is limited to the CLI's
+#     production dependencies, no tooling (oxlint, tsdown, ...).
+#     Used by orchestration jobs (plan, provision, deploy).
+#   - "deps" mode: installs the caller project's own dependencies so the job
+#     can run project scripts (lint, test, build, publish).
+#     Used by project jobs (quality, build, publish).
+#
+# Both can be combined if a future job needs both.
+#
+# Note: the `prepare` hook in root/workspace package.json files is guarded
+# with `[ -n "$CI" ] || husky`, so husky is skipped in CI without having
+# to pass --ignore-scripts. Legitimate postinstall scripts (e.g. native
+# binding builds) are still allowed to run.
+
+name: Setup NextNode
+description: Checkout, install pnpm/Node, and optionally install the pipeline CLI or project deps
+
+inputs:
+    infra:
+        description: >
+            Checkout the pipeline repository into .infra/ and install the CLI's
+            deps. Needed by jobs that run the pipeline CLI (plan, deploy).
+        default: 'false'
+    deps:
+        description: >
+            Install the caller project's dependencies. Needed by jobs that run
+            the project's own scripts (lint, test, build, publish).
+        default: 'true'
+    fetch-depth:
+        description: >
+            Git fetch depth for checkout. Use 0 for full history
+            (required by semantic-release for commit analysis).
+        default: '1'
+
+runs:
+    using: composite
+    steps:
+        - name: Checkout caller repo
+          uses: actions/checkout@v6
+          with:
+              fetch-depth: ${{ inputs.fetch-depth }}
+
+        - name: Setup pnpm
+          uses: pnpm/action-setup@v5
+
+        # Checkout the pipeline BEFORE setup-node so its lockfile exists for
+        # cache-dependency-path resolution.
+        - name: Checkout pipeline
+          if: inputs.infra == 'true'
+          uses: actions/checkout@v6
+          with:
+              repository: NextNodeSolutions/infrastructure
+              path: .infra
+
+        - name: Setup Node (pipeline cache)
+          if: inputs.infra == 'true'
+          uses: actions/setup-node@v6
+          with:
+              node-version: 24
+              cache: pnpm
+              cache-dependency-path: .infra/pnpm-lock.yaml
+
+        - name: Setup Node (project cache)
+          if: inputs.infra != 'true'
+          uses: actions/setup-node@v6
+          with:
+              node-version: 24
+              cache: pnpm
+
+        - name: Install pipeline deps
+          if: inputs.infra == 'true'
+          run: pnpm install --frozen-lockfile --prefer-offline --prod --filter @nextnode-solutions/infrastructure
+          shell: bash
+          working-directory: .infra
+
+        - name: Install project deps
+          if: inputs.deps == 'true'
+          run: pnpm install --frozen-lockfile --prefer-offline
+          shell: bash
