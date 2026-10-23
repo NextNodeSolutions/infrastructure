@@ -1,0 +1,65 @@
+{
+  "name": "@nextnode-solutions/infrastructure",
+  "version": "0.0.0-development",
+  "description": "NextNode infrastructure CLI for Cloudflare Workers",
+  "keywords": [
+    "cli",
+    "deploy",
+    "infrastructure",
+    "nextnode"
+  ],
+  "homepage": "https://github.com/NextNodeSolutions/infrastructure#readme",
+  "license": "MIT",
+  "author": "NextNode Solutions",
+  "files": [
+    "dist"
+  ],
+  "bin": {
+    "infra": "./dist/index.js"
+  },
+  "repository": {
+    "directory": "packages/infrastructure",
+    "type": "git",
+    "url": "https://github.com/NextNodeSolutions/infrastructure.git"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "node src/index.ts",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint --type-aware",
+    "type-check": "tsgo --noEmit"
+  },
+  "dependencies": {
+    "@nextnode-solutions/logger": "^1.0.0",
+    "smol-toml": "^1.6.1",
+    "valibot": "^1.4.1"
+  },
+  "devDependencies": {
+    "@nextnode-solutions/standards": "^1.27.1",
+    "@types/node": "^24.13.3",
+    "@typescript/native-preview": "7.0.0-dev.20260407.1",
+    "oxfmt": "^0.43.0",
+    "oxlint": "1.62.0",
+    "oxlint-tsgolint": "0.23.0",
+    "tsdown": "^0.21.9"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "packageManager": "pnpm@10.11.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./worker-types": {
+      "types": "./src/cli/deploy/worker-types.ts",
+      "default": "./dist/cli/deploy/worker-types.js"
+    }
+  },
+  "imports": {
+    "#/*": "./src/*"
+  }
+}

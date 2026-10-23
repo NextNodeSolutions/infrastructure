@@ -1,0 +1,214 @@
+import {
+	DEFAULT_WORKER_ENTRY,
+	KEBAB_IDENTIFIER_PATTERN,
+} from '#/config/types.ts'
+import { isRecord } from '#/kernel/guards.ts'
+import { boolean, literal, object, optional, union } from 'valibot'
+
+import { REMOVED_SECRETS_FIELD_REASON } from './deploy-removed-fields.ts'
+import {
+	toWorkerFirewall,
+	workerFirewallFields,
+} from './deploy-worker-firewall.ts'
+import {
+	forbiddenField,
+	nonEmptyString,
+	optionalNonEmpty,
+	runSchema,
+	stringArray,
+} from './valibot.ts'
+
+import type { ProjectSection, WorkerServiceConfig } from '#/config/types.ts'
+import type { GenericSchema } from 'valibot'
+import type { ParsedWorkerFirewall } from './deploy-worker-firewall.ts'
+
+const containerFieldRejection = (
+	name: string,
+	field: string,
+	why: string,
+): string =>
+	`deploy.services.${name}.${field} is not supported with deploy target "cloudflare-workers" (a Worker is not a container: ${why})`
+
+type ParsedWorkerService = ParsedWorkerFirewall & {
+	url?: string | undefined
+	internal?: boolean | undefined
+	secrets?: undefined
+	needs: string[]
+	depends_on: string[]
+	entry: string | false
+	assets?: string | undefined
+	observability: boolean
+	port?: undefined
+	source?: undefined
+	ref?: undefined
+	registry_auth_secret?: undefined
+	context?: undefined
+	dockerfile?: undefined
+	target?: undefined
+	build_args?: undefined
+}
+
+const CONTAINER_FIELD_REASONS: Readonly<Record<string, string>> = {
+	port: 'it has no listening port - drop `port`',
+	source: 'it is not built or pulled as an image - drop `source`',
+	ref: 'there is no image to pull - drop `ref`',
+	registry_auth_secret:
+		'there is no registry to authenticate against - drop `registry_auth_secret`',
+	context: 'it has no Docker build context - drop `context`',
+	dockerfile: 'it has no Dockerfile - drop `dockerfile`',
+	target: 'it has no Docker build stage - drop `target`',
+	build_args:
+		'it has no Docker build - point `entry` at the bundle and drop `build_args`',
+}
+
+const containerFieldsForbidden = (
+	name: string,
+): Record<string, GenericSchema<unknown, undefined>> =>
+	Object.fromEntries(
+		Object.entries(CONTAINER_FIELD_REASONS).map(([field, why]) => [
+			field,
+			forbiddenField(containerFieldRejection(name, field, why)),
+		]),
+	)
+
+const workerServiceSchema = (
+	name: string,
+): GenericSchema<unknown, ParsedWorkerService> =>
+	object({
+		url: optionalNonEmpty(
+			`deploy.services.${name}.url must be a non-empty string`,
+		),
+		// Puts this routed service behind Cloudflare Access, or keeps it public
+		// in an internal project: overrides `project.internal` either way.
+		internal: optional(
+			boolean(`deploy.services.${name}.internal must be a boolean`),
+		),
+		secrets: forbiddenField(
+			`deploy.services.${name}.secrets is not supported: ${REMOVED_SECRETS_FIELD_REASON}`,
+		),
+		needs: stringArray(
+			`deploy.services.${name}.needs must be an array of strings`,
+			`deploy.services.${name}.needs entries must be non-empty strings`,
+		),
+		depends_on: stringArray(
+			`deploy.services.${name}.depends_on must be an array of strings`,
+			`deploy.services.${name}.depends_on entries must be non-empty strings`,
+		),
+		entry: optional(
+			union([
+				nonEmptyString(
+					`deploy.services.${name}.entry must be a non-empty string`,
+				),
+				// `entry = false` opts out of the script entirely: a
+				// static-assets-only Worker (assets required, see the cross-field
+				// check below).
+				literal(false),
+			]),
+			DEFAULT_WORKER_ENTRY,
+		),
+		assets: optionalNonEmpty(
+			`deploy.services.${name}.assets must be a non-empty string`,
+		),
+		// Workers Logs default on: a silent-by-default Worker retains no
+		// invocation logs and is a debugging trap. Opt out with
+		// `observability = false` on high-traffic Workers where the
+		// 20M-events/month Paid allowance is a concern.
+		observability: optional(
+			boolean(`deploy.services.${name}.observability must be a boolean`),
+			true,
+		),
+		...workerFirewallFields(name),
+		...containerFieldsForbidden(name),
+	})
+
+type MutableWorkerServiceConfig = {
+	-readonly [K in keyof WorkerServiceConfig]: WorkerServiceConfig[K]
+}
+
+function toWorkerService(
+	parsed: ParsedWorkerService,
+	project: Pick<ProjectSection, 'internal'>,
+): WorkerServiceConfig {
+	const workerService: MutableWorkerServiceConfig = {
+		internal: Boolean(parsed.url) && (parsed.internal ?? project.internal),
+		needs: parsed.needs,
+		dependsOn: parsed.depends_on,
+		entry: parsed.entry,
+		observability: parsed.observability,
+		...toWorkerFirewall(parsed),
+	}
+	if (parsed.url) workerService.url = parsed.url
+	if (typeof parsed.assets !== 'undefined')
+		workerService.assets = parsed.assets
+	return workerService
+}
+
+export interface WorkerServicesValidation {
+	errors: string[]
+	services: Record<string, WorkerServiceConfig>
+}
+
+// The assets directory has exactly one source per service shape: declared for a
+// static-assets-only Worker, derived from the entry otherwise - so the two forms
+// are mutually exclusive and `false` carries its directory.
+function shapeError(
+	name: string,
+	parsed: ParsedWorkerService,
+): string | undefined {
+	if (parsed.entry === false && typeof parsed.assets === 'undefined')
+		return `deploy.services.${name}: \`entry = false\` (static-assets-only Worker) requires \`assets\` - declare the built assets directory`
+	if (parsed.entry !== false && typeof parsed.assets !== 'undefined')
+		return `deploy.services.${name}: \`assets\` is only valid with \`entry = false\` - a scripted Worker derives its assets directory from its entry`
+	if (!parsed.internal || parsed.url) return undefined
+	return `deploy.services.${name}: \`internal = true\` requires \`url\` - Access protects a hostname, and a Worker without one is reachable only through service bindings`
+}
+
+function projectInternalErrors(
+	project: Pick<ProjectSection, 'internal'>,
+	services: Readonly<Record<string, WorkerServiceConfig>>,
+): string[] {
+	const hasRoutedService = Object.values(services).some(
+		service => service.url,
+	)
+	if (!project.internal || hasRoutedService) return []
+	return ['project.internal requires at least one routed Worker with a url']
+}
+
+export function validateWorkerServices(
+	deployRecord: Record<string, unknown>,
+	project: Pick<ProjectSection, 'internal'>,
+): WorkerServicesValidation {
+	const raw = deployRecord['services']
+	if (typeof raw === 'undefined') return { errors: [], services: {} }
+	if (!isRecord(raw)) {
+		return { errors: ['[deploy.services] must be a table'], services: {} }
+	}
+
+	const errors: string[] = []
+	const services: Record<string, WorkerServiceConfig> = {}
+	for (const [name, rawService] of Object.entries(raw)) {
+		if (!KEBAB_IDENTIFIER_PATTERN.test(name)) {
+			errors.push(
+				`deploy.services name "${name}" must be lowercase alphanumeric with dashes only (pattern: ${KEBAB_IDENTIFIER_PATTERN.source})`,
+			)
+			continue
+		}
+		if (!isRecord(rawService)) {
+			errors.push(`[deploy.services.${name}] must be a table`)
+			continue
+		}
+		const validation = runSchema(workerServiceSchema(name), rawService)
+		if (!validation.ok) {
+			errors.push(...validation.errors)
+			continue
+		}
+		const error = shapeError(name, validation.section)
+		if (error) {
+			errors.push(error)
+			continue
+		}
+		services[name] = toWorkerService(validation.section, project)
+	}
+	if (errors.length) return { errors, services }
+	return { errors: projectInternalErrors(project, services), services }
+}

@@ -1,0 +1,233 @@
+import type {
+	AccessApplicationResource,
+	AccessPolicyResource,
+} from './terraform-access.ts'
+
+interface TerraformCloudBlock {
+	readonly organization: string
+	readonly workspaces: { readonly name: string }
+}
+
+interface RequiredProvider {
+	readonly source: string
+	readonly version: string
+}
+
+interface TerraformBlock {
+	readonly cloud: TerraformCloudBlock
+	readonly required_providers: {
+		readonly cloudflare: RequiredProvider
+		// Declared ONLY when [services.planetscale] is present, so a plain
+		// workers project never pulls the PlanetScale provider on `terraform init`.
+		readonly planetscale?: RequiredProvider
+	}
+}
+
+interface ProviderBlock {
+	readonly cloudflare: Record<string, never>
+	// Auth flows ambiently through PLANETSCALE_SERVICE_TOKEN_ID /
+	// PLANETSCALE_SERVICE_TOKEN in the process env - the block itself is empty.
+	readonly planetscale?: Record<string, never>
+}
+
+interface VariableDeclaration {
+	readonly type: string
+}
+
+export interface ZoneDataSource {
+	readonly filter: { readonly name: string }
+}
+
+export interface D1ReadReplication {
+	readonly mode: 'auto' | 'disabled'
+}
+
+// read_replication is Optional+Computed in the Cloudflare v5 provider: on create
+// the API writes { mode: "disabled" }, so a config that omits it plans a perpetual
+// { mode: "disabled" } -> null diff that the API rejects (400 "Expected object,
+// received null"). Declaring it explicitly keeps config and state in sync.
+export interface D1DatabaseResource {
+	readonly account_id: string
+	readonly name: string
+	readonly read_replication: D1ReadReplication
+}
+
+export interface KvNamespaceResource {
+	readonly account_id: string
+	readonly title: string
+}
+
+export interface QueueResource {
+	readonly account_id: string
+	readonly queue_name: string
+}
+
+export interface R2BucketResource {
+	readonly account_id: string
+	readonly name: string
+	readonly location: string
+}
+
+export interface R2CustomDomainResource {
+	readonly account_id: string
+	readonly bucket_name: string
+	readonly domain: string
+	readonly zone_id: string
+	readonly enabled: boolean
+}
+
+// A `planetscale_postgres_branch_role` on the auto-created `main` branch: it
+// produces the Postgres credentials (host/db/user/password) Hyperdrive's origin
+// consumes. The database itself is created out-of-band (create-if-absent API
+// adapter) because the PlanetScale provider has no database resource.
+export interface PlanetscaleBranchRoleResource {
+	readonly organization: string
+	readonly database: string
+	readonly branch: string
+	readonly name: string
+	readonly inherited_roles: ReadonlyArray<string>
+}
+
+// The Hyperdrive origin: discrete credentials, not a DSN. `host`/`database`/
+// `user`/`password` interpolate the branch-role outputs; `scheme`/`port` are the
+// fixed PlanetScale Postgres coordinates. `password` is sensitive - it lives only
+// in Terraform state, never in the Worker's env.
+export interface HyperdriveOrigin {
+	readonly scheme: string
+	readonly host: string
+	readonly port: number
+	readonly database: string
+	readonly user: string
+	readonly password: string
+}
+
+export interface HyperdriveConfigResource {
+	readonly account_id: string
+	readonly name: string
+	readonly origin: HyperdriveOrigin
+}
+
+export interface DnsRecordResource {
+	readonly zone_id: string
+	readonly name: string
+	readonly type: 'A'
+	readonly content: string
+	readonly ttl: number
+	readonly proxied: boolean
+}
+
+interface RulesetRuleCommon {
+	readonly ref: string
+	readonly description: string
+	readonly expression: string
+}
+
+export interface RedirectRulesetRule extends RulesetRuleCommon {
+	readonly action: 'redirect'
+	readonly action_parameters: {
+		readonly from_value: {
+			readonly target_url: { readonly expression: string }
+			readonly preserve_query_string: boolean
+			readonly status_code: number
+		}
+	}
+}
+
+// The custom response a rule returns instead of the origin's. `content` is a
+// body serialised by the generator (JSON for `application/json`), never
+// hand-concatenated into the surrounding JSON.
+export interface RulesetResponse {
+	readonly status_code: number
+	readonly content_type: string
+	readonly content: string
+}
+
+// The counting parameters of a rate limiting rule. `characteristics` is what
+// the counter is keyed by; `period` counts, `mitigation_timeout` blocks for.
+export interface RateLimitParameters {
+	readonly characteristics: ReadonlyArray<string>
+	readonly period: number
+	readonly requests_per_period: number
+	readonly mitigation_timeout: number
+}
+
+export interface RateLimitRulesetRule extends RulesetRuleCommon {
+	readonly action: 'block'
+	readonly action_parameters: { readonly response: RulesetResponse }
+	readonly ratelimit: RateLimitParameters
+}
+
+// A plain deny. No `action_parameters`: the Free plan reserves the custom
+// response of a firewall custom rule to Pro and above, and rejects `log`.
+export interface BlockRulesetRule extends RulesetRuleCommon {
+	readonly action: 'block'
+}
+
+export type RulesetRule =
+	| RedirectRulesetRule
+	| RateLimitRulesetRule
+	| BlockRulesetRule
+
+// The phases a generated ruleset may enter. A zone owns ONE entry point per
+// phase, so the label a family emits under and its phase move together; a phase
+// absent from this union is a phase nothing emits.
+export type RulesetPhase =
+	| 'http_request_dynamic_redirect'
+	| 'http_ratelimit'
+	| 'http_request_firewall_custom'
+
+export interface RulesetResource {
+	readonly zone_id: string
+	readonly name: string
+	readonly kind: 'zone'
+	readonly phase: RulesetPhase
+	readonly rules: ReadonlyArray<RulesetRule>
+}
+
+export interface TerraformResourceBlock {
+	readonly cloudflare_zero_trust_access_application?: Readonly<
+		Record<string, AccessApplicationResource>
+	>
+	readonly cloudflare_zero_trust_access_policy?: Readonly<
+		Record<string, AccessPolicyResource>
+	>
+	readonly cloudflare_d1_database?: Readonly<
+		Record<string, D1DatabaseResource>
+	>
+	readonly cloudflare_workers_kv_namespace?: Readonly<
+		Record<string, KvNamespaceResource>
+	>
+	readonly cloudflare_queue?: Readonly<Record<string, QueueResource>>
+	readonly planetscale_postgres_branch_role?: Readonly<
+		Record<string, PlanetscaleBranchRoleResource>
+	>
+	readonly cloudflare_hyperdrive_config?: Readonly<
+		Record<string, HyperdriveConfigResource>
+	>
+	readonly cloudflare_r2_bucket?: Readonly<Record<string, R2BucketResource>>
+	readonly cloudflare_r2_custom_domain?: Readonly<
+		Record<string, R2CustomDomainResource>
+	>
+	readonly cloudflare_dns_record?: Readonly<Record<string, DnsRecordResource>>
+	readonly cloudflare_ruleset?: Readonly<Record<string, RulesetResource>>
+}
+
+export type TerraformResourceDraft = {
+	-readonly [K in keyof TerraformResourceBlock]?: TerraformResourceBlock[K]
+}
+
+export interface OutputValue {
+	readonly sensitive?: boolean
+	readonly value: string | Readonly<Record<string, string>>
+}
+
+export interface TerraformMainConfig {
+	readonly terraform: TerraformBlock
+	readonly provider: ProviderBlock
+	readonly variable?: { readonly account_id: VariableDeclaration }
+	readonly data: {
+		readonly cloudflare_zone: Readonly<Record<string, ZoneDataSource>>
+	}
+	readonly resource?: TerraformResourceBlock
+	readonly output?: Readonly<Record<string, OutputValue>>
+}

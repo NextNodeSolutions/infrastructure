@@ -1,0 +1,187 @@
+/**
+ * The Cloudflare Workers runtime version every generated config pins. A fixed
+ * date freezes the workerd behaviour set so a deploy is reproducible run to run;
+ * bumping it is a deliberate, reviewed change - never a floating value. Held
+ * centrally by the infra (the dev never spells it in nextnode.toml).
+ */
+export const DEFAULT_WORKERS_COMPATIBILITY_DATE = '2026-06-01'
+
+/**
+ * The compatibility flags every generated config carries. `nodejs_compat`
+ * unlocks the Node built-ins @astrojs/cloudflare and common libraries reach for
+ * on workerd. A named constant so every service gets the identical flag set and
+ * a change is one edit.
+ */
+export const WORKERS_COMPATIBILITY_FLAGS = ['nodejs_compat'] as const
+
+/**
+ * Default values for omitted fields when a paid-plan service explicitly
+ * declares `[deploy.services.<name>.limits]`. Workers Free cannot set CPU
+ * limits, so services without a limits declaration emit no limits block.
+ */
+export const DEFAULT_WORKER_CPU_MS = 1000
+export const DEFAULT_WORKER_SUBREQUESTS = 50
+
+/**
+ * The binding a Worker script reads its static-asset fetcher under
+ * (`env.ASSETS`). Set on a scripted Worker shipping assets (the
+ * @astrojs/cloudflare `server`/`client` convention, or the historic
+ * `_worker.js/` one) - never on a static-assets-only Worker, where nothing
+ * could consume it (wrangler refuses the combination).
+ */
+export const WORKERS_ASSETS_BINDING = 'ASSETS'
+
+/**
+ * The D1 binding name. A cloudflare-workers project has a single D1 database
+ * (materialised `<project>-<env>-d1`), bound as `env.DB` into every Worker that
+ * declares `needs = ["d1"]`.
+ */
+export const WORKERS_D1_BINDING = 'DB'
+
+/**
+ * Turn a service or resource alias into the `env.<KEY>` binding name every
+ * generated config uses: uppercase, dashes to underscores (`admin-api` ->
+ * `ADMIN_API`). Shared by KV/R2/Queue backing bindings and worker-to-worker
+ * service bindings so a single rule governs every `env` key a Worker reads.
+ */
+export function toBindingName(alias: string): string {
+	return alias.toUpperCase().replaceAll('-', '_')
+}
+
+/**
+ * The Hyperdrive binding name. A cloudflare-workers project with
+ * `[services.planetscale]` gets a single Hyperdrive config (pooling + query
+ * cache in front of the provisioned Postgres), bound as `env.HYPERDRIVE` into
+ * every Worker that declares `needs = ["planetscale"]`. The Worker connects
+ * through the binding's `connectionString`; the origin credentials live only in
+ * Terraform state, never in the Worker's env.
+ */
+export const WORKERS_HYPERDRIVE_BINDING = 'HYPERDRIVE'
+
+// A worker Custom Domain route: `custom_domain: true` distinguishes it from a
+// zone route (a wildcard pattern). The pattern is the resolved hostname the
+// Worker answers on.
+export interface WranglerRoute {
+	readonly pattern: string
+	readonly custom_domain: true
+}
+
+// Static assets served alongside the Worker. `directory` is the folder of built
+// files; `binding` exposes the asset fetcher to Worker code.
+export interface WranglerAssets {
+	readonly directory: string
+	// The `env.ASSETS` fetcher a script uses to read assets back. Present on a
+	// scripted Worker only - wrangler refuses a binding on an assets-only
+	// Worker ("Cannot use assets with a binding in an assets-only Worker").
+	readonly binding?: string
+}
+
+export interface WranglerD1Database {
+	readonly binding: string
+	readonly database_name: string
+	readonly database_id: string
+	readonly migrations_dir?: string
+}
+
+export interface WranglerKvNamespace {
+	readonly binding: string
+	readonly id: string
+}
+
+export interface WranglerR2Bucket {
+	readonly binding: string
+	readonly bucket_name: string
+}
+
+export interface WranglerQueueProducer {
+	readonly binding: string
+	readonly queue: string
+}
+
+// A worker-to-worker service binding: `env.<binding>` exposes a `Fetcher` that
+// invokes the target Worker directly on Cloudflare's edge (no DNS, no TLS, no
+// public hostname) - the ONLY channel a Worker reaches another Worker on.
+// `service` is the target's deployed script name (`<project>-<env>-<name>`), so
+// the binding resolves to the exact script wrangler deploys and teardown deletes.
+export interface WranglerServiceBinding {
+	readonly binding: string
+	readonly service: string
+}
+
+// A Hyperdrive binding: `binding` is the env var name the Worker reads
+// (`env.HYPERDRIVE`), `id` is the `cloudflare_hyperdrive_config` UUID Terraform
+// emitted. No connection string travels here - the origin credentials are held
+// by the Hyperdrive config in Terraform state.
+export interface WranglerHyperdrive {
+	readonly binding: string
+	readonly id: string
+}
+
+// A Rate Limit binding: `env.<name>` exposes a limiter counting `limit` hits
+// per `period` seconds under whatever key the Worker code passes. It runs
+// INSIDE the Worker, so the request is already billed when it rejects - it
+// protects what sits behind the Worker, never the Worker's own bill.
+export interface WranglerRateLimit {
+	readonly name: string
+	readonly namespace_id: string
+	readonly simple: { readonly limit: number; readonly period: number }
+}
+
+export interface WranglerQueues {
+	readonly producers: ReadonlyArray<WranglerQueueProducer>
+}
+
+export interface WranglerTriggers {
+	readonly crons: ReadonlyArray<string>
+}
+
+// Workers Logs configuration. `enabled` gates whether invocation logs are
+// ingested and retained (queryable in the dashboard); without it a Worker keeps
+// no logs. Always emitted so the on/off state is explicit in the generated
+// config rather than relying on wrangler's own default.
+export interface WranglerObservability {
+	readonly enabled: boolean
+}
+
+// Per-invocation ceilings for services that explicitly declare limits.
+export interface WranglerLimits {
+	readonly cpu_ms: number
+	readonly subrequests: number
+}
+
+/**
+ * The wrangler configuration document (JSON) generated per service and written
+ * to an ephemeral file for `wrangler deploy --config`. Optional keys are omitted
+ * when empty so a generated config stays minimal (no `routes: []` on an internal
+ * worker, no `vars: {}` before US-3.2 fills them). Field shapes mirror the
+ * wrangler v4 schema verbatim so wrangler consumes it without translation.
+ */
+export interface WranglerDocument {
+	readonly name: string
+	// The worker script. Omitted for a static-assets-only Worker (no `main`, no
+	// script env): wrangler deploys the assets with no code to invoke.
+	readonly main?: string
+	readonly compatibility_date: string
+	readonly compatibility_flags: ReadonlyArray<string>
+	// Always emitted `false`: no worker (routed or internal) may answer on
+	// `<name>.workers.dev`. A routed worker reaches users on its Custom Domain; an
+	// internal worker is reachable only through service bindings.
+	readonly workers_dev?: boolean
+	readonly routes?: ReadonlyArray<WranglerRoute>
+	readonly assets?: WranglerAssets
+	readonly vars?: Readonly<Record<string, string>>
+	readonly services?: ReadonlyArray<WranglerServiceBinding>
+	readonly d1_databases?: ReadonlyArray<WranglerD1Database>
+	readonly kv_namespaces?: ReadonlyArray<WranglerKvNamespace>
+	readonly r2_buckets?: ReadonlyArray<WranglerR2Bucket>
+	readonly hyperdrive?: ReadonlyArray<WranglerHyperdrive>
+	readonly queues?: WranglerQueues
+	readonly ratelimits?: ReadonlyArray<WranglerRateLimit>
+	readonly triggers?: WranglerTriggers
+	// Always emitted so Workers Logs are on by default; a service sets
+	// `observability = false` in nextnode.toml to opt out.
+	readonly observability: WranglerObservability
+	// Omitted unless `[deploy.services.*.limits]` is declared; Workers Free
+	// rejects a CPU limits block.
+	readonly limits?: WranglerLimits
+}
