@@ -117,7 +117,7 @@ commands:
             echo "root access ended, project commands run as $(sudo -nu project id -un)"
             # Git runs what the repository configures (hooks, core.fsmonitor), and Wrangler
             # calls git for version metadata. The platform user has no further use for git,
-            # so its git finds no repository from here on. Project shells keep theirs.
+            # so its git finds no repository from here on. project-run removes the variable.
             echo 'export GIT_DIR=/nonexistent' >> "$BASH_ENV"
   project-run:
     description: Run a project command as the project user, with the application's secrets and without the job's OIDC tokens.
@@ -131,8 +131,9 @@ commands:
       - run:
           name: <<# parameters.step >><< parameters.step >><</ parameters.step >><<^ parameters.step >><< parameters.command >><</ parameters.step >>
           # exec: no process the project user could read ever held the tokens.
+          # GIT_DIR: the platform's git is inert, the project's keeps working in the checkout.
           # umask: the platform user, same group, can read and write what the project builds.
-          command: exec env -u CIRCLE_OIDC_TOKEN -u CIRCLE_OIDC_TOKEN_V2 HOME=/home/project sudo -nE -u project bash -eo pipefail -c 'umask 002; set -a; [ -f ~/app.env ] && . ~/app.env; set +a; << parameters.command >>'
+          command: exec env -u CIRCLE_OIDC_TOKEN -u CIRCLE_OIDC_TOKEN_V2 -u GIT_DIR HOME=/home/project sudo -nE -u project bash -eo pipefail -c 'umask 002; set -a; [ -f ~/app.env ] && . ~/app.env; set +a; << parameters.command >>'
 
 jobs:
   checks:
