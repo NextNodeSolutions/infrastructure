@@ -195,6 +195,7 @@ These are the facts that forced the decisions above. Each names where to look wh
 | On the Infisical free plan, custom roles are refused with a plan error, additional privileges are refused for recent projects as a retired feature, folder access controls are paid, and identities are billed per unit. | A free identity sees every environment of each project it belongs to. | Infisical pricing page and access-control documentation. |
 | Infisical ignores a request that only turns delete protection off. | To delete a protected identity, send the name together with the flag, then delete. | Infisical source, identity service. |
 | Cloudflare offers no OIDC federation for its API. | An API token stays in the vault and is rotated. | Cloudflare API documentation. |
+| Wrangler refuses to upload a version of a Worker that was never deployed, and a version carries no change of routes or domains. | The first production deployment of a Worker goes through a direct deployment, with nothing serving yet. Routes and domains are Pulumi's, never a version's. | Wrangler documentation on versions and gradual deployments. |
 
 ## Open points
 
@@ -202,7 +203,6 @@ Each is validated on the canary repository before it reaches a real project.
 
 - Dynamic configuration when the configuration source is another repository, through the continuation API. The fallback is a static workflow where the development jobs exit at once when the project has no development environment.
 - Pulumi's S3 backend against R2, with path-style addressing and the automatic region. The lock is a file, so one deployment at a time per stack.
-- Gradual Worker versions on a Worker that serves static assets. The fallback is a plain deployment with a rollback on smoke failure.
 - The scopes of the Cloudflare API token.
 
 ## Identifiers of the shared resources
