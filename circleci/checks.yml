@@ -189,7 +189,7 @@ commands:
           command: |
             rm -rf /home/circleci/platform/infrastructure
             env -u GIT_DIR git clone -q --depth 1 --branch "<< pipeline.parameters.program_ref >>" https://github.com/NextNodeSolutions/infrastructure.git /home/circleci/platform/infrastructure
-            cd /home/circleci/platform/infrastructure && echo "platform package at $(git rev-parse --short HEAD) (<< pipeline.parameters.program_ref >>)"
+            echo "platform package at $(env -u GIT_DIR git -C /home/circleci/platform/infrastructure rev-parse --short HEAD) (<< pipeline.parameters.program_ref >>)"
       - restore_cache:
           keys:
             - platform-{{ checksum "/home/circleci/platform/infrastructure/platform/package-lock.json" }}
