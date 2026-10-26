@@ -166,6 +166,9 @@ commands:
             [ "$status" = 0 ] || exit "$status"
             # `nn <file> <key>` reads one value of a platform JSON file, in any later step.
             echo 'nn() { node -p "require(\"/home/circleci/platform/\" + process.argv[1] + \".json\")[process.argv[2]] ?? \"\"" -- "$1" "$2"; }' >> "$BASH_ENV"
+            # Puts the committed Wrangler configuration back in the checkout, for Wrangler. The
+            # destination is unlinked first, not followed: the project may have left a link there.
+            echo 'restore_wrangler_config() { local entry config; entry=$(nn nextnode entry); config=$(nn nextnode wrangler_config); cp --remove-destination "/home/circleci/platform/wrangler/$config" ~/project/"$entry/$config"; }' >> "$BASH_ENV"
   install-pnpm:
     description: Install the pnpm version pinned in the project's package.json.
     steps:
@@ -344,7 +347,7 @@ jobs:
           command: |
             cd "$(nn nextnode entry)"
             config=$(nn nextnode wrangler_config)
-            rm -f "$config" && cp "/home/circleci/platform/wrangler/$config" "$config"
+            restore_wrangler_config
             set -a; . /home/circleci/platform/platform.env; set +a
             workers_dev_url() { grep -oE "https://[a-z0-9.-]+\.workers\.dev" /home/circleci/platform/wrangler.log | head -1 || true; }
             record() { node -e 'require("node:fs").writeFileSync("/home/circleci/platform/deploy.json", JSON.stringify({ version: process.argv[1], url: process.argv[2] }))' -- "$1" "$2"; }
@@ -380,15 +383,16 @@ jobs:
             [ -n "$version" ] || { echo "Deployed directly, already serving."; exit 0; }
             cd "$(nn nextnode entry)"
             config=$(nn nextnode wrangler_config)
-            rm -f "$config" && cp "/home/circleci/platform/wrangler/$config" "$config"
+            restore_wrangler_config
             set -a; . /home/circleci/platform/platform.env; set +a
             wrangler versions deploy "$version@100%" --config "$config" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" --yes
 
   probe:
-    # The boundary's regression test. Every probe is an attack the project could run,
-    # through the same entry point as a project command, and passes only when the
-    # attack fails. No vault login: the files it attacks stand in for the real ones,
-    # written the way the vault step writes them.
+    # The boundary's regression test. Every step is an attack: the project's, run
+    # through the same entry point as a project command, or a change to what the
+    # platform reads, run as the platform user on a copy of the checkout. A step
+    # passes only when the attack fails. No vault login: the files it attacks stand
+    # in for the real ones, written the way the vault step writes them.
     executor: node
     environment:
       # Every project declares production, so the job never halts with zero probes run.
@@ -399,18 +403,25 @@ jobs:
       - read-toml
       - run:
           name: "Probe: a second Wrangler configuration, a build command and a route are refused"
-          # Each attack on a fresh copy of the checkout, and an accepted attack ends the
-          # step at once: in an && list, set -e would let it pass.
+          # Each attack on a fresh copy of the checkout. A refusal is matched on its
+          # reason, so a crash of the reader does not pass for a refusal, and an
+          # accepted attack ends the step at once: in an && list, set -e would let it pass.
           command: |
             entry=$(nn nextnode entry); config=$(nn nextnode wrangler_config)
             case "$config" in *.json|*.jsonc) ;; *) echo "this probe edits a JSON configuration, the canary commits $config"; exit 1;; esac
-            fresh() { cd /tmp && work=$(mktemp -d) && cp -r ~/project/. "$work" && cd "$work"; }
-            refused() { if node /tmp/read-toml.cjs > /dev/null 2>&1; then echo "accepted: $1"; exit 1; fi; echo "refused: $1"; }
-            # Adds keys to the committed configuration, through a parser.
-            with() { node -e 'const fs = require("node:fs"), jsonc = require(process.env.HOME + "/.platform/node_modules/jsonc-parser"); const file = process.argv[1]; const config = jsonc.parse(fs.readFileSync(file, "utf8"), [], { allowTrailingComma: true }); fs.writeFileSync(file, JSON.stringify({ ...config, ...JSON.parse(process.argv[2]) }))' -- "$entry/$config" "$1"; }
-            fresh; touch "$entry/wrangler.toml"; refused "a second Wrangler configuration"
-            fresh; with '{ "build": { "command": "true" } }'; refused "a build command"
-            fresh; with '{ "routes": ["probe.example/*"] }'; refused "a route"
+            fresh() { work=$(mktemp -d) && cp -r ~/project/. "$work" && cd "$work"; }
+            refused() {
+              if out=$(node /tmp/read-toml.cjs 2>&1); then echo "accepted: $1"; exit 1; fi
+              printf '%s\n' "$out" | grep -q "$2" || { echo "read-toml failed on $1 for another reason:"; printf '%s\n' "$out"; exit 1; }
+              echo "refused: $1"
+            }
+            # Adds keys to the committed configuration through a parser, merging environment sections.
+            with() { node -e 'const fs = require("node:fs"), jsonc = require(process.env.HOME + "/.platform/node_modules/jsonc-parser"); const file = process.argv[1]; const config = jsonc.parse(fs.readFileSync(file, "utf8"), [], { allowTrailingComma: true }); const extra = JSON.parse(process.argv[2]); const env = Object.fromEntries(Object.entries(extra.env ?? {}).map(([name, section]) => [name, { ...config.env?.[name], ...section }])); fs.writeFileSync(file, JSON.stringify({ ...config, ...extra, env: { ...config.env, ...env } }))' -- "$entry/$config" "$1"; }
+            fresh; touch "$entry/wrangler.toml"; refused "a second Wrangler configuration" "expected one Wrangler configuration"
+            fresh; with '{ "build": { "command": "true" } }'; refused "a build command" "declares a build command"
+            fresh; with "{ \"env\": { \"$NEXTNODE_ENVIRONMENT\": { \"build\": { \"command\": \"true\" } } } }"; refused "a build command of the environment" "declares a build command"
+            fresh; with '{ "routes": ["probe.example/*"] }'; refused "a route" "declares routes"
+            fresh; with "{ \"env\": { \"$NEXTNODE_ENVIRONMENT\": { \"route\": \"probe.example/*\" } } }"; refused "a route of the environment" "declares routes"
       - run:
           name: "Probe: a value read from a platform file stays text"
           command: |
@@ -422,11 +433,13 @@ jobs:
           command: |
             (umask 077; echo 'export PLATFORM_PROBE=platform' > /home/circleci/platform/platform.env)
             echo 'export APP_PROBE=application' | sudo -nu project sh -c 'umask 077; cat > /home/project/app.env'
+            # Loaded the way the deployment steps load it: nothing of it may reach a later step.
+            set -a; . /home/circleci/platform/platform.env; set +a
             # Project shells have no BASH_ENV: the path reaches the probes through a platform file.
             node -e 'require("node:fs").writeFileSync("/home/circleci/platform/probe.json", JSON.stringify({ bash_env: process.env.BASH_ENV }))'
             stat -c '%U:%G %a %n' "$BASH_ENV" /home/circleci/platform /home/circleci/platform/platform.env
             # What a same-user process would read: the token is there, and the probes must not reach it.
-            grep -qsa CIRCLE_OIDC_TOKEN "/proc/$$/environ" || { echo "this platform step does not hold the token in /proc/$$/environ: the process probe would prove nothing"; exit 1; }
+            grep -Eqsaz "^CIRCLE_OIDC_TOKEN(_V2)?=" "/proc/$$/environ" || { echo "this platform step does not hold the token in /proc/$$/environ: the process probe would prove nothing"; exit 1; }
       - forget-job-token
       - run:
           name: "Probe: the job token is gone from the platform steps"
@@ -435,27 +448,39 @@ jobs:
           step: "Probe: the project receives its own secrets and not the platform's"
           command: '[ "$APP_PROBE" = application ] && [ -z "${PLATFORM_PROBE:-}" ]'
       - project-run:
-          step: "Probe: the project finds no job token in its environment"
+          step: "Probe: the project finds no job token in its environment, by name or by shape"
           # Anchored on a name: sudo records the command, pattern included, in SUDO_COMMAND.
-          command: '! env | grep -Eq "^CIRCLE_OIDC_TOKEN(_V2)?="'
+          command: '! env | grep -Eq "^CIRCLE_OIDC_TOKEN(_V2)?=|eyJ[A-Za-z0-9_-]+\.eyJ"'
       - project-run:
           step: "Probe: the project finds no job token in any process it can inspect"
-          command: '! grep -Eqsaz "^CIRCLE_OIDC_TOKEN(_V2)?=" /proc/[0-9]*/environ'
+          command: '! grep -Eqsaz "^CIRCLE_OIDC_TOKEN(_V2)?=|eyJ[A-Za-z0-9_-]+\.eyJ" /proc/[0-9]*/environ'
+      - project-run:
+          step: "Probe: no file the project can read holds a token"
+          command: 'file=$(node -p "require(\"/home/circleci/platform/probe.json\").bash_env"); [ -n "$file" ] && ! grep -Eqrs "eyJ[A-Za-z0-9_-]+\.eyJ" /home/circleci/platform "$file"'
       - project-run:
           step: "Probe: the project cannot read the platform's secrets"
           command: '! cat /home/circleci/platform/platform.env'
       - project-run:
-          step: "Probe: the project cannot write in the platform's directory"
-          command: '! touch /home/circleci/platform/probe'
+          step: "Probe: the project cannot write where the platform keeps its files or loads code"
+          command: 'for d in /home/circleci /home/circleci/.platform /home/circleci/.platform/node_modules /home/circleci/.platform/pulumi-home /home/circleci/platform; do [ -d "$d" ] || { echo "missing: $d"; exit 1; }; if touch "$d/probe" 2> /dev/null; then echo "writable: $d"; exit 1; fi; done'
       - project-run:
           step: "Probe: the project cannot append to the file every platform step sources"
           command: 'file=$(node -p "require(\"/home/circleci/platform/probe.json\").bash_env"); [ -n "$file" ] && ! sh -c "echo probe >> $file"'
       - run:
-          name: "Probe: the sourced file holds only the pipeline's text"
-          command: '! grep -qx probe "$BASH_ENV"'
+          name: "Probe: the sourced file is the platform user's and holds only the pipeline's text"
+          command: '[ "$(stat -c %U "$BASH_ENV")" = circleci ] && [ -z "$(find "$BASH_ENV" -perm /022)" ] && ! grep -Eq "^probe$|PLATFORM_PROBE|eyJ[A-Za-z0-9_-]+\.eyJ" "$BASH_ENV"'
       - project-run:
           step: "Probe: the project cannot become another user"
           command: '! sudo -n true && ! sudo -nu circleci true'
+      - project-run:
+          step: "Probe: the project replaces the Wrangler configuration after the platform read it"
+          command: 'entry=$(node -p "require(\"/home/circleci/platform/nextnode.json\").entry"); config=$(node -p "require(\"/home/circleci/platform/nextnode.json\").wrangler_config"); echo "{ \"build\": { \"command\": \"true\" } }" > "$entry/$config.project" && mv "$entry/$config" "$entry/$config.committed" && ln -s "$config.project" "$entry/$config"'
+      - run:
+          name: "Probe: Wrangler receives the committed configuration, whatever the project left in its place"
+          command: |
+            restore_wrangler_config
+            file=~/project/"$(nn nextnode entry)/$(nn nextnode wrangler_config)"
+            [ ! -L "$file" ] && cmp "$file" "/home/circleci/platform/wrangler/$(nn nextnode wrangler_config)"
       - project-run:
           step: "Probe: the project configures git to run a command"
           command: 'printf "[core]\n\tfsmonitor = /bin/sh -c \"touch /tmp/probe-fsmonitor-ran\"\n" >> .git/config && grep -q fsmonitor .git/config'
