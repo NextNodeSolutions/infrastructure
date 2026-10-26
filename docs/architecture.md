@@ -113,7 +113,7 @@ Three rules keep the secrets where they belong.
 
 - **The vault token never leaves the step that obtained it.** Login and export happen in one shell. Nothing is written to the file CircleCI sources before each step.
 - **Project code never sees the job token.** Install, build and the migration command run with the OIDC variables removed from their environment, after the vault step has ended. A dependency with a lifecycle script cannot trade the job token for a vault token.
-- **Production secrets exist only in `deploy-prod`.** That job exports the production environment and no other, and it exists only after the approval. Infisical cannot tell the two deployment jobs apart, because both tokens carry the same subject. The central configuration is what tells them apart, and only a pull request here can change it.
+- **Production secrets exist only in `deploy-prod`.** That job exports the production environment and no other. It runs on `main` only, after the approval when the project has a development environment, and straight after `checks` when it has none. Infisical cannot tell the two deployment jobs apart, because both tokens carry the same subject. The central configuration is what tells them apart, and only a pull request here can change it.
 
 Development deploys directly to all traffic. Production uploads a version that receives no traffic, runs the smoke request against it, and promotes it only on success.
 
