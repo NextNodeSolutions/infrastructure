@@ -123,6 +123,10 @@ The rules that keep the secrets where they belong.
 
 Development deploys directly to all traffic. Production uploads a version that receives no traffic, runs the smoke request against its preview URL, and promotes it only on success. The preview URL is the gate, so a production Worker keeps preview URLs enabled.
 
+### The probes
+
+Each rule above is a claim about what project code cannot do, and the `probe` job replays the attacks behind the claims. A step that is the project's attack runs as the project user through the same entry point as a project command. A step that is a change to what the platform reads runs as the platform user on a copy of the checkout. A step passes only when the attack fails, and a refusal is matched on its reason, so a tool that crashes does not pass for one that refuses. The job holds no secret: the files it attacks are stand-ins, written the way the vault step writes the real ones. The `probe` pipeline parameter selects the job in place of the pipeline, on the canary. A rule the job cannot replay, such as which job exports which environment, is held by the configuration file itself and checked by reading it.
+
 ### What a failure leaves behind
 
 | Failure | What is left |
@@ -197,11 +201,11 @@ These are the facts that forced the decisions above. Each names where to look wh
 | Fact | Consequence | Re-check in |
 | --- | --- | --- |
 | CircleCI's second-generation OIDC subject ends with the repository and the git ref, and custom-webhook runs carry no ref. | The subject binding can pin `main`. API-triggered runs must be checked before relying on them. | CircleCI documentation, OpenID Connect tokens. |
-| Every CircleCI job receives the OIDC token, with or without a context. | No context is used. The identifiers a job needs are written in the configuration. | CircleCI documentation, OpenID Connect tokens. |
+| Every CircleCI job receives the OIDC token, with or without a context, and CircleCI adds a generation of it under a new variable name without notice: a third one appeared while the configuration removed two by name. | No context is used. The identifiers a job needs are written in the configuration. The token variables are removed by prefix, never by a list of names, and the probe job matches a token by its shape, not by a name. | CircleCI documentation, OpenID Connect tokens, and the probe job. |
 | A pipeline whose configuration comes from another repository is not displayed in the CircleCI configuration editor, and `CIRCLE_REPOSITORY_URL` is empty. | Read the file from this repository. Take the repository from the checkout, not from that variable. | CircleCI documentation, GitHub App pipelines. |
 | CircleCI reserves `<<` in configuration files. | A shell heredoc inside a `run` step must escape its marker as `\<<`. | CircleCI documentation, configuration reference. |
 | On the `cimg` images, a global npm install needs `sudo`, and `CI=true` makes `pnpm install` frozen by default. | The install step says so. Error messages at that step point here. | The image documentation. |
-| On the `cimg` images sudo is passwordless, the CircleCI agent that holds the job token runs as root, and a process may read the environment and overwrite the files of any process of its own user. | Project commands run as a second user created in the job, through `exec`; the OIDC variables are unset at the head of `BASH_ENV` after the vault step; root access ends once the tools are installed and sudo keeps one rule, to become the project user. | The image documentation, and a probe step on the canary that lists which processes expose the token. |
+| On the `cimg` images sudo is passwordless, the CircleCI agent that holds the job token runs as root, and a process may read the environment and overwrite the files of any process of its own user. | Project commands run as a second user created in the job, through `exec`; the OIDC variables are unset at the head of `BASH_ENV` after the vault step; root access ends once the tools are installed and sudo keeps one rule, to become the project user. | The image documentation, and the probe job on the canary. |
 | Infisical reads bound claims through dotted paths and ignores array values. | Only `sub` and `aud` can be bound for CircleCI. | Infisical source, OIDC auth service and the dot-access helper. |
 | On the Infisical free plan, custom roles are refused with a plan error, additional privileges are refused for recent projects as a retired feature, folder access controls are paid, and identities are billed per unit. | A free identity sees every environment of each project it belongs to. | Infisical pricing page and access-control documentation. |
 | Infisical ignores a request that only turns delete protection off. | To delete a protected identity, send the name together with the flag, then delete. | Infisical source, identity service. |
