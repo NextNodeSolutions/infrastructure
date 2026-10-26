@@ -193,7 +193,15 @@ jobs:
                 step: Upload a version that receives no traffic
                 command: |
                   cd "$NEXTNODE_ENTRY"
-                  wrangler versions upload --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" 2>&1 | tee /tmp/wrangler.log
+                  if ! wrangler versions upload --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" 2>&1 | tee /tmp/wrangler.log; then
+                    grep -q "does not yet exist" /tmp/wrangler.log || exit 1
+                    # A Worker gets versions only after its first deployment. Nothing serves
+                    # yet, so there is nothing to protect: deploy directly, once.
+                    echo "First deployment of this Worker, deployed directly."
+                    wrangler deploy --env "$NEXTNODE_ENVIRONMENT" 2>&1 | tee /tmp/wrangler.log
+                    echo "export NEXTNODE_VERSION= NEXTNODE_URL=$(grep -oE "https://[a-z0-9.-]+\.workers\.dev" /tmp/wrangler.log | head -1)" >> "$BASH_ENV"
+                    exit 0
+                  fi
                   version=$(grep -oE "Worker Version ID: [0-9a-f-]+" /tmp/wrangler.log | head -1 | cut -d" " -f4)
                   preview=$(grep -oE "https://[a-z0-9.-]+\.workers\.dev" /tmp/wrangler.log | head -1)
                   [ -n "$version" ] || { echo "wrangler printed no version id"; exit 1; }
@@ -201,10 +209,14 @@ jobs:
                   echo "export NEXTNODE_VERSION=$version NEXTNODE_URL=$preview" >> "$BASH_ENV"
             - run:
                 name: Smoke the preview, the previous version keeps serving meanwhile
-                command: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null -w "%{http_code} ${NEXTNODE_URL}${NEXTNODE_HEALTH}\n" "${NEXTNODE_URL}${NEXTNODE_HEALTH}"
+                command: |
+                  [ -n "$NEXTNODE_URL" ] || { echo "No URL to check on a first deployment without workers.dev."; exit 0; }
+                  curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null -w "%{http_code} ${NEXTNODE_URL}${NEXTNODE_HEALTH}\n" "${NEXTNODE_URL}${NEXTNODE_HEALTH}"
             - project-run:
                 step: Promote the version to all traffic
-                command: cd "$NEXTNODE_ENTRY" && wrangler versions deploy "$NEXTNODE_VERSION@100%" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" --yes
+                command: |
+                  [ -n "$NEXTNODE_VERSION" ] || { echo "First deployment, already serving."; exit 0; }
+                  cd "$NEXTNODE_ENTRY" && wrangler versions deploy "$NEXTNODE_VERSION@100%" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" --yes
 
 workflows:
   pipeline:
