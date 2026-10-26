@@ -4,12 +4,10 @@
 import { readFileSync } from "node:fs";
 
 export type Spec = {
-  /** Project name, also the Pulumi project name. */
+  /** The repository's name, which names the project everywhere the platform keeps state for it: the Pulumi project and the vault project. */
   readonly project: string;
   /** Environment being deployed, also the stack name. */
   readonly environment: string;
-  /** Identifier of the Infisical project that holds the application's secrets. */
-  readonly infisical_project: string;
   /** Directory of the Wrangler configuration, relative to the checkout. */
   readonly entry: string;
   /** Route the smoke request targets after each upload. */
@@ -44,7 +42,6 @@ export function readSpec(path: string): Spec {
   return {
     project: filled("project"),
     environment: filled("environment"),
-    infisical_project: filled("infisical_project"),
     entry: filled("entry"),
     health: filled("health"),
     migrate: text("migrate"),

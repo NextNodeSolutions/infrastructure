@@ -1,9 +1,11 @@
 // Reads nextnode.toml and the committed Wrangler configuration of one environment into the
 // spec, and keeps a copy of that configuration aside for Wrangler.
 //
-//   node read.ts --environment <name> --platform <directory>
+//   node read.ts --repository <name> --environment <name> --platform <directory>
 //
-// Runs in the project checkout as the platform user, before any project code. A refusal
+// Runs in the project checkout as the platform user, before any project code. The
+// repository's name, as CircleCI checked it out, names the project everywhere the
+// platform keeps state for it: a value of the project's files never does. A refusal
 // names the key or the rule and exits 1. Exit 3 means the environment is not declared,
 // which the development job turns into a halt: a missing development environment is the
 // project's choice, not an error.
@@ -15,14 +17,14 @@ import { parse as parseToml } from "smol-toml";
 import { isRecord, type Spec } from "./src/spec.ts";
 
 const NOT_DECLARED = 3;
-// The project name becomes the Pulumi project name, which Pulumi restricts to this shape.
+// The repository name becomes the Pulumi project name, which Pulumi restricts to this shape.
 const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const WRANGLER_CONFIG = /^wrangler\.(jsonc?|toml)$/;
 
 const { values: args } = parseArgs({
-  options: { environment: { type: "string" }, platform: { type: "string" } },
+  options: { repository: { type: "string" }, environment: { type: "string" }, platform: { type: "string" } },
 });
-if (!args.environment || !args.platform) throw new Error("usage: read.ts --environment <name> --platform <directory>");
+if (!args.repository || !args.environment || !args.platform) throw new Error("usage: read.ts --repository <name> --environment <name> --platform <directory>");
 const environment = args.environment;
 
 function refuse(message: string): never {
@@ -74,17 +76,14 @@ if (!isRecord(table(toml, "environments")[environment])) {
   console.error(`nextnode.toml declares no environment "${environment}"`);
   process.exit(environment === "development" ? NOT_DECLARED : 1);
 }
-const project = table(toml, "project");
-const name = text(project, "name", undefined);
-if (!PROJECT_NAME.test(name)) refuse("nextnode.toml: project.name must start with a letter or digit, then letters, digits, dots, dashes or underscores, 100 characters at most: it names the Pulumi project");
+if (!PROJECT_NAME.test(args.repository)) refuse(`the repository name ${JSON.stringify(args.repository)} cannot name a Pulumi project: a letter or digit, then letters, digits, dots, dashes or underscores, 100 characters at most`);
 const deploy = table(toml, "deploy");
 const entry = text(deploy, "entry", ".");
 // The entry is a directory of the checkout: the platform reads and copies nothing outside it.
 if (isAbsolute(entry) || entry.split(/[\\/]/).includes("..")) refuse("nextnode.toml: deploy.entry must be a directory of the repository, relative to its root");
 const spec: Spec = {
-  project: name,
+  project: args.repository,
   environment,
-  infisical_project: text(project, "infisical_project", undefined),
   entry,
   health: text(deploy, "health", "/"),
   migrate: typeof deploy.migrate === "string" ? deploy.migrate : "",

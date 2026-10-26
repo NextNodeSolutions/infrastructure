@@ -18,12 +18,10 @@ The read step runs once per deployment job, before any project code. It reads `n
 
 ## nextnode.toml
 
-The file lives at the repository root and holds names only, never a secret value.
+The file lives at the repository root and holds names only, never a secret value. It does not name the project: the repository's name, as CircleCI checked it out, names the Pulumi project that holds the project's state and the Infisical project that holds its secrets. A value of the file could name another project's, so none does. The repository name must be one Pulumi accepts as a project name: a letter or digit, then letters, digits, dots, dashes or underscores, a hundred characters at most.
 
 | Key | Role | When absent |
 | --- | --- | --- |
-| `project.name` | Names the project everywhere the platform keeps state for it, including the Pulumi project. A letter or digit, then letters, digits, dots, dashes or underscores, a hundred characters at most. | Refused. |
-| `project.infisical_project` | Identifier of the Infisical project that holds the application's secrets, one environment per deployment environment. | Refused. |
 | `deploy.entry` | Directory that holds the Wrangler configuration, relative to the root and inside the repository. | The root. |
 | `deploy.health` | Route the pipeline requests after each upload. It must answer with a success status on a fresh deployment, even against an empty database. | The root route. |
 | `deploy.migrate` | Command that applies the project's migrations, run as the project user after the build with the application's secrets in its environment. The platform never guesses a migration tool. | No migration step. |
@@ -59,7 +57,7 @@ The install is frozen: a lockfile that does not match the manifest fails the fir
 
 ## What a project command sees
 
-Every script runs as a user of its own, in an environment built from a list rather than inherited from the job. The list is the contract: `PATH`, `HOME`, `CI`, the pnpm store location, and when they are set `NEXTNODE_ENVIRONMENT`, `CIRCLE_BRANCH`, `CIRCLE_SHA1`, `CIRCLE_BUILD_URL` and `CIRCLE_PROJECT_REPONAME`. In the deployment job the application's secrets of the environment being deployed are added, from the Infisical project the file names. Nothing else is there: not the job's tokens, not the platform's credentials, not a variable another step exported. A script that needs another variable of CircleCI's asks for the list to grow, through a pull request on this repository.
+Every script runs as a user of its own, in an environment built from a list rather than inherited from the job. The list is the contract: `PATH`, `HOME`, `CI`, the pnpm store location, and when they are set `NEXTNODE_ENVIRONMENT`, `CIRCLE_BRANCH`, `CIRCLE_SHA1`, `CIRCLE_BUILD_URL` and `CIRCLE_PROJECT_REPONAME`. In the deployment job the application's secrets of the environment being deployed are added, from the Infisical project named after the repository. Nothing else is there: not the job's tokens, not the platform's credentials, not a variable another step exported. A script that needs another variable of CircleCI's asks for the list to grow, through a pull request on this repository.
 
 ## How a mistake is reported
 
@@ -67,7 +65,8 @@ A refusal of `nextnode.toml` or of the Wrangler configuration happens in the rea
 
 | Mistake | Where it shows |
 | --- | --- |
-| A missing or malformed key of `nextnode.toml`, a Wrangler configuration that breaks a rule above | The read step of the deployment job, which prints the key or the rule. The checks job does not read these files, so the error appears on `main` only. |
+| A missing or malformed key of `nextnode.toml`, a Wrangler configuration that breaks a rule above, a repository name Pulumi refuses | The read step of the deployment job, which prints the key or the rule. The checks job does not read these files, so the error appears on `main` only. |
+| No Infisical project named after the repository, or two | The secrets step of the deployment job, before any project code runs. |
 | An unpinned or malformed `packageManager` | The install step of the checks job, on the first push. |
 | A lockfile out of date | The project's install step, on the first push. On `main`, the deployment job fails at the same step, before the build. |
 | A domain whose zone is not in the platform's account | The resources step of the deployment job, from the platform package, after the upload: the Worker serves on its workers.dev URL and the domain is not attached. |

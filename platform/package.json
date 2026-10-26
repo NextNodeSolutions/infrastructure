@@ -12,13 +12,21 @@
     "deploy": "node deploy.ts"
   },
   "dependencies": {
+    "@infisical/cli": "0.44.9",
     "@pulumi/cloudflare": "6.23.1",
     "@pulumi/pulumi": "3.272.0",
     "jsonc-parser": "3.3.1",
-    "smol-toml": "1.9.1"
+    "smol-toml": "1.9.1",
+    "wrangler": "4.152.0"
   },
   "devDependencies": {
     "@types/node": "24.9.1",
     "typescript": "6.0.3"
+  },
+  "allowScripts": {
+    "@infisical/cli@0.44.9": true,
+    "esbuild@0.28.2": true,
+    "workerd@1.20261019.1": true,
+    "protobufjs@7.6.6": true
   }
 }

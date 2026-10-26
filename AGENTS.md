@@ -12,6 +12,7 @@ A change that weakens one is wrong, even when it compiles.
 4. **Project code never runs with a job token or the vault token in its environment.** Install, build and migration commands run after the vault step has ended, in an environment built from a list of names written in the configuration. A variable the list does not name is absent, whoever added it.
 5. **An application's production secrets are read only by the production deployment job.** That job runs on `main` only, after the approval. The vault cannot tell the deployment jobs apart, so this configuration is what does.
 6. **A project repository holds no CI file.** Its pipeline definition points at this repository. Anything a project must express goes through `nextnode.toml` or its package scripts.
+7. **A project reaches its own state and its own secrets, and no other project's.** The repository's name, as CircleCI checked it out, names the Pulumi project and the vault project. A value of the project's files never names either, because the vault identity and the state bucket are shared by every project.
 
 ## Architecture rules
 
@@ -20,7 +21,8 @@ A change that weakens one is wrong, even when it compiles.
 - **Project code runs as the project user, platform tools as the platform user.** A new step that runs anything from the project repository goes through `project-run`. A step that holds a platform credential never runs project code and reads only what the repository committed, which is why the committed Wrangler configuration is restored and named to Wrangler before it runs, and why a build command in it is refused.
 - **A value the project controls never reaches a shell as code.** Values from `nextnode.toml` or from a deployment go through the platform's JSON files and `nn`, never into `BASH_ENV`, an `eval`, or an unquoted expansion. The one exception is the migration command, which is the project's own command run as the project user. A file the platform writes once the project user exists goes under the platform user's own directory, never in a shared place, and a directory the platform loads code from is recreated empty first.
 - **Migrations are the project's command, named in `nextnode.toml`.** The platform does not know the project's migration tool and must not guess it.
-- **Identifiers that are not secret still never reach a project repository as copies.** They live in the vault, in the registration script, or in this configuration, so that a rename happens in one place.
+- **Identifiers that are not secret still never reach a project repository as copies.** They live in the vault, in the registration script, or in this configuration, so that a rename happens in one place. The one identifier a project carries is its repository's name, which CircleCI supplies and the job trusts.
+- **A pipeline parameter reaches a step as a variable, never as text of its command.** A parameter is substituted into the configuration before the shell runs, so a value placed in a command is code. The job validates the value's shape and refuses, outside the canary, what only the canary may set.
 - **A vendor workaround is written next to the vendor fact that forced it.** The constraints table in the architecture page names where to re-check each fact. Remove the workaround when the fact changes, in the same change.
 
 ## Code rules
