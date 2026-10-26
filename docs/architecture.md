@@ -127,7 +127,7 @@ Development deploys directly to all traffic. Production uploads a version that r
 
 ### The probes
 
-Each rule above is a claim about what project code cannot do, and the `probe` job checks the claims. Every step of it is an attack, run as the project user through the same entry point as a project command, and the step passes only when the attack fails. The job holds no secret: the files it attacks are stand-ins, written the way the vault step writes the real ones. The `probe` pipeline parameter selects the job in place of the pipeline, on the canary. A rule without a probe is a claim.
+Each rule above is a claim about what project code cannot do, and the `probe` job replays the attacks behind the claims. A step that is the project's attack runs as the project user through the same entry point as a project command. A step that is a change to what the platform reads runs as the platform user on a copy of the checkout. A step passes only when the attack fails, and a refusal is matched on its reason, so a tool that crashes does not pass for one that refuses. The job holds no secret: the files it attacks are stand-ins, written the way the vault step writes the real ones. The `probe` pipeline parameter selects the job in place of the pipeline, on the canary. A rule the job cannot replay, such as which job exports which environment, is held by the configuration file itself and checked by reading it.
 
 ### What a failure leaves behind
 
