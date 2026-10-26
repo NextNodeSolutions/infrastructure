@@ -115,6 +115,10 @@ commands:
             sudo rm /etc/sudoers.d/50-circleci
             if sudo -n true 2> /dev/null; then echo "root access is still available"; exit 1; fi
             echo "root access ended, project commands run as $(sudo -nu project id -un)"
+            # Git runs what the repository configures (hooks, core.fsmonitor), and Wrangler
+            # calls git for version metadata. The platform user has no further use for git,
+            # so its git finds no repository from here on. Project shells keep theirs.
+            echo 'export GIT_DIR=/nonexistent' >> "$BASH_ENV"
   project-run:
     description: Run a project command as the project user, with the application's secrets and without the job's OIDC tokens.
     parameters:
