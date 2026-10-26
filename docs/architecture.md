@@ -131,7 +131,7 @@ Development deploys directly to all traffic. Production uploads a version that r
 
 ## Secrets and identities
 
-Infisical holds every value. Nothing secret is written in this repository, in a project repository, in a CircleCI context or in a pipeline log.
+Infisical holds every value. Nothing secret is written in this repository, in a project repository, in CircleCI or in a pipeline log.
 
 - **One platform project** holds what every deployment needs, with one Infisical environment per deployment environment. That is the Cloudflare API token and account of each environment, the credentials of the state bucket, and the passphrase that encrypts Pulumi's secret outputs.
 - **One project per application**, named after the repository, with the same environments, holds the application's own secrets. Locally, `infisical run --env development` replaces a dotenv file.
@@ -186,7 +186,7 @@ These are the facts that forced the decisions above. Each names where to look wh
 | Fact | Consequence | Re-check in |
 | --- | --- | --- |
 | CircleCI's second-generation OIDC subject ends with the repository and the git ref, and custom-webhook runs carry no ref. | The subject binding can pin `main`. API-triggered runs must be checked before relying on them. | CircleCI documentation, OpenID Connect tokens. |
-| CircleCI no longer requires a context for a job to receive an OIDC token. | Contexts can go, with the non-secret identifiers moved into the configuration. To confirm on a pipeline before removing them. | Same page, and one pipeline run. |
+| Every CircleCI job receives the OIDC token, with or without a context. | No context is used. The identifiers a job needs are written in the configuration. | CircleCI documentation, OpenID Connect tokens. |
 | A pipeline whose configuration comes from another repository is not displayed in the CircleCI configuration editor, and `CIRCLE_REPOSITORY_URL` is empty. | Read the file from this repository. Take the repository from the checkout, not from that variable. | CircleCI documentation, GitHub App pipelines. |
 | CircleCI reserves `<<` in configuration files. | A shell heredoc inside a `run` step must escape its marker as `\<<`. | CircleCI documentation, configuration reference. |
 | On the `cimg` images, a global npm install needs `sudo`, and `CI=true` makes `pnpm install` frozen by default. | The install step says so. Error messages at that step point here. | The image documentation. |
@@ -203,7 +203,6 @@ Each is validated on the canary repository before it reaches a real project.
 - Pulumi's S3 backend against R2, with path-style addressing and the automatic region. The lock is a file, so one deployment at a time per stack.
 - Gradual Worker versions on a Worker that serves static assets. The fallback is a plain deployment with a rollback on smoke failure.
 - The scopes of the Cloudflare API token per environment.
-- Whether the OIDC token is present in a job that uses no context.
 
 ## Identifiers of the shared resources
 

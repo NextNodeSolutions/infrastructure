@@ -7,7 +7,7 @@ These rules hold for people and agents alike. A directory whose rules differ add
 A change that weakens one is wrong, even when it compiles.
 
 1. **Every project runs the configuration from `main`.** A merge here is a release to every NextNode project at once. `main` accepts pull requests only, with a squash merge, under the organization rulesets.
-2. **No secret value exists in this repository, in a CircleCI context, or in a log.** A job obtains secrets at run time by trading its OIDC token for a short-lived vault token. Contexts carry identifiers only.
+2. **No secret value exists in this repository, in CircleCI, or in a log.** A job obtains secrets at run time by trading its OIDC token for a short-lived vault token. No CircleCI context exists, so nothing can be hidden in one.
 3. **A branch pipeline touches no secret.** Only jobs that run on `main` log in to the vault, so a pull request from any author is safe to run.
 4. **Project code never runs with the job token or the vault token in its environment.** Install, build and migration commands run after the vault step has ended, with the OIDC variables removed.
 5. **Production secrets are read only by the production deployment job.** That job runs on `main` only, after the approval when the project has a development environment, and straight after the checks when it has none. The vault cannot tell the deployment jobs apart, so this configuration is what does.

@@ -9,6 +9,9 @@
 #   hold         a person approves the production deployment in CircleCI.
 #   deploy-prod  on main, after the approval.
 #
+# No CircleCI context is used: every job receives an OIDC token, and the only
+# values a job needs besides secrets are identifiers written below.
+#
 # How secrets flow: a deployment job trades its OIDC token for a vault token
 # that lives only in the step that fetched the secrets. The environment's
 # secrets are exported to the following steps; the vault token never is, and the
@@ -71,6 +74,10 @@ jobs:
     executor: node
     environment:
       NEXTNODE_ENVIRONMENT: << parameters.environment >>
+      # Identifiers, not secrets. The vault identity accepts only tokens issued for
+      # the main ref of a repository of the organization.
+      INFISICAL_IDENTITY_ID: 17af2913-5649-4771-b149-aa9bf50ff39d
+      INFISICAL_PLATFORM_PROJECT_ID: 721a5f71-3801-40e2-a06d-a4a9b431e1c7
     steps:
       - checkout
       - install-pnpm
@@ -142,7 +149,6 @@ workflows:
       - deploy:
           name: deploy-dev
           environment: development
-          context: deploy-dev
           requires: [checks]
           filters: &main
             branches:
@@ -154,6 +160,5 @@ workflows:
       - deploy:
           name: deploy-prod
           environment: production
-          context: deploy-prod
           requires: [hold]
           filters: *main
