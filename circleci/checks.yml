@@ -459,13 +459,13 @@ jobs:
       - project-run:
           step: "Probe: the project finds no job token in its environment, by name or by shape"
           # Anchored on a name: sudo records the command, pattern included, in SUDO_COMMAND.
-          command: '! env | grep -Eq "^CIRCLE_OIDC_TOKEN(_V2)?=|eyJ[A-Za-z0-9_-]+\.eyJ"'
+          command: 'found=$(env | grep -E "^CIRCLE_OIDC_TOKEN(_V2)?=|eyJ[A-Za-z0-9_-]+\.eyJ" | cut -d= -f1 || true); [ -z "$found" ] || { echo "a token-shaped value in: $found"; exit 1; }'
       - project-run:
           step: "Probe: the project finds no job token in any process it can inspect"
-          command: '! grep -Eqsaz "^CIRCLE_OIDC_TOKEN(_V2)?=|eyJ[A-Za-z0-9_-]+\.eyJ" /proc/[0-9]*/environ'
+          command: 'found=$(grep -Elsaz "^CIRCLE_OIDC_TOKEN(_V2)?=|eyJ[A-Za-z0-9_-]+\.eyJ" /proc/[0-9]*/environ || true); [ -z "$found" ] || { echo "a token-shaped value in: $found"; exit 1; }'
       - project-run:
           step: "Probe: no file the project can read holds a token"
-          command: 'file=$(node -p "require(\"/home/circleci/platform/probe.json\").bash_env"); [ -n "$file" ] && ! grep -Eqrs "eyJ[A-Za-z0-9_-]+\.eyJ" /home/circleci/platform "$file"'
+          command: 'file=$(node -p "require(\"/home/circleci/platform/probe.json\").bash_env"); [ -n "$file" ]; found=$(grep -Elrs "eyJ[A-Za-z0-9_-]+\.eyJ" /home/circleci/platform "$file" || true); [ -z "$found" ] || { echo "a token-shaped value in: $found"; exit 1; }'
       - project-run:
           step: "Probe: the project cannot read the platform's secrets"
           command: '! cat /home/circleci/platform/platform.env'
