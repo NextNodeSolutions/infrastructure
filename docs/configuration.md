@@ -37,7 +37,7 @@ The presence of `environments.development` is the project's choice. A developmen
 Wrangler runs as the platform user with the Cloudflare credential, on the configuration the repository committed. The read step keeps that copy aside before any project command runs, and the deployment restores it, so a build cannot alter what Wrangler reads. Four rules follow, each checked by the read step.
 
 - **Exactly one configuration file at the entry**, in JSON, JSONC or TOML. Two files would leave Wrangler to choose.
-- **A section per deployment environment**, under `env`. Wrangler deploys that section, and the Worker is named after it, or after the top-level name suffixed with the environment when the section gives no name. The platform attaches the domain to that Worker, so it needs the name to be the one Wrangler uses.
+- **A section per deployment environment**, under `env`, and a name for the Worker. Wrangler deploys that section, and the Worker is named after it, or after the top-level name suffixed with the environment when the section gives no name. The platform attaches the domain to that Worker, so it needs the name to be the one Wrangler uses, and refuses a configuration that names nothing.
 - **No build command.** The configuration is read with the platform credential, and a build command in it would run project code with that credential. The build is the project's `build` script, run as the project user.
 - **No route and no custom domain.** Domains come from `nextnode.toml` and are attached by the platform package after each upload. A route declared to Wrangler would be fought over by every deployment.
 
@@ -56,6 +56,10 @@ The scripts the pipeline calls:
 | `build` | The deployment job, as the project user, before the migrations and the upload. | Yes. |
 
 The install is frozen: a lockfile that does not match the manifest fails the first step rather than installing something else.
+
+## What a project command sees
+
+Every script runs as a user of its own, in an environment built from a list rather than inherited from the job. The list is the contract: `PATH`, `HOME`, `CI`, the pnpm store location, and when they are set `NEXTNODE_ENVIRONMENT`, `CIRCLE_BRANCH`, `CIRCLE_SHA1`, `CIRCLE_BUILD_URL` and `CIRCLE_PROJECT_REPONAME`. In the deployment job the application's secrets of the environment being deployed are added, from the Infisical project the file names. Nothing else is there: not the job's tokens, not the platform's credentials, not a variable another step exported. A script that needs another variable of CircleCI's asks for the list to grow, through a pull request on this repository.
 
 ## How a mistake is reported
 

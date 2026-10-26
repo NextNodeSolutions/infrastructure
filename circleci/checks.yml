@@ -13,22 +13,23 @@
 #   probe        on the canary, through the probe pipeline parameter: every attack
 #                the project could run against the boundary below, each must fail.
 #
-# No CircleCI context is used: every job receives an OIDC token, and the only
-# values a job needs besides secrets are identifiers written below.
+# No CircleCI context is used: every job receives OIDC tokens, and the only values
+# a job needs besides secrets are identifiers written below.
 #
-# Two users share the job. The platform user owns the job: it trades the OIDC
-# token for a vault token inside one step, keeps the platform secrets in a file
-# only it can read, and runs Wrangler on the configuration the repository
-# committed. The project user runs every project command through `project-run`:
-# install, build, migrations. It receives the application's secrets of the
-# environment being deployed, nothing else, and it cannot read the platform
-# user's files or processes. Root access ends before the first project command;
-# sudo then serves only to become the project user.
+# Two users share the job. The platform user owns the job: it trades an OIDC token
+# for a vault token inside one step, keeps the platform secrets in a file only it
+# can read, and runs Wrangler on the configuration the repository committed. The
+# project user runs every project command through `project-run`: install, build,
+# migrations. Its environment is built from a list written here, it receives the
+# application's secrets of the environment being deployed and nothing else, and it
+# cannot read the platform user's files or processes. Root access ends before the
+# first project command; sudo then serves only to become the project user.
 #
-# The Cloudflare resources of an environment are converged by the platform package of
-# this repository, a Pulumi program driven through the Automation API. The job clones
-# this repository at `program_ref`, `main` unless a canary run names a branch, so a
-# project always runs the program that `main` holds, as it runs this file from `main`.
+# The platform package of this repository, cloned at `program_ref` before anything
+# else, holds every program the job runs: the read step, the secrets filter, the
+# deployment record and the Pulumi program driven through the Automation API. The
+# parameter is `main` unless a canary run names a branch, so a project always runs
+# the programs that `main` holds, as it runs this file from `main`.
 #
 # Nothing the project controls is ever evaluated by a shell. Values read from
 # nextnode.toml and produced by a deployment travel between steps as JSON files
@@ -42,7 +43,7 @@ parameters:
   program_ref:
     type: string
     default: main
-    description: Git ref of this repository to take the platform package from. Only an API trigger can set it, which is how a canary run validates a pull request's program.
+    description: Git ref of this repository to take the platform package from. Only an API trigger can set it, which is how a canary run validates a pull request's programs.
   probe:
     type: boolean
     default: false
@@ -55,17 +56,63 @@ executors:
     resource_class: small
 
 commands:
+  platform-package:
+    description: Clone the platform package from this repository at program_ref into the platform's directory and install its dependencies, from the cache when its lockfile is unchanged.
+    steps:
+      - run:
+          name: Clone the platform package
+          # Shallow, over HTTPS, no credential: this repository is public and holds no
+          # secret by construction. The platform's directory is created here, before any
+          # project code: the project user, in the platform's group, reads it and writes
+          # nothing in it. Secret files in it are further restricted.
+          command: |
+            mkdir -m 750 -p /home/circleci/platform
+            git clone -q --depth 1 --branch "<< pipeline.parameters.program_ref >>" https://github.com/NextNodeSolutions/infrastructure.git /home/circleci/platform/infrastructure
+            echo "platform package at $(git -C /home/circleci/platform/infrastructure rev-parse --short HEAD) (<< pipeline.parameters.program_ref >>)"
+      - restore_cache:
+          keys:
+            - platform-{{ checksum "/home/circleci/platform/infrastructure/platform/package-lock.json" }}
+      - run:
+          name: Install the platform package's dependencies, unless cached
+          command: cd /home/circleci/platform/infrastructure/platform && { [ -d node_modules ] || npm ci --omit=dev --no-fund --no-audit; }
+      - save_cache:
+          key: platform-{{ checksum "/home/circleci/platform/infrastructure/platform/package-lock.json" }}
+          paths: [/home/circleci/platform/infrastructure/platform/node_modules]
+  read-toml:
+    description: Read nextnode.toml and the Wrangler configuration for the environment into the spec, or halt the job when the environment is not declared.
+    steps:
+      - run:
+          name: Read nextnode.toml
+          command: |
+            node /home/circleci/platform/infrastructure/platform/read.ts --environment "$NEXTNODE_ENVIRONMENT" --platform /home/circleci/platform && status=0 || status=$?
+            if [ "$status" = 3 ]; then circleci-agent step halt; exit 0; fi
+            [ "$status" = 0 ] || exit "$status"
+            # Three functions for the later steps, text written here and nothing else.
+            # `nn <file> <key>` reads one value of a platform JSON file.
+            # `restore_wrangler_config` puts the committed Wrangler configuration back in the
+            # checkout; the destination is unlinked first, not followed, because the project
+            # may have left a link there.
+            # `platform_wrangler <args>` runs Wrangler as the platform user on that restored
+            # configuration, for the environment, with the platform's secrets loaded in a
+            # subshell and its structured output kept for the deployment record.
+            cat >> "$BASH_ENV" \<<'ENV'
+            nn() { node -p "require(\"/home/circleci/platform/\" + process.argv[1] + \".json\")[process.argv[2]] ?? \"\"" -- "$1" "$2"; }
+            restore_wrangler_config() { cp --remove-destination "/home/circleci/platform/wrangler/$(nn nextnode wrangler_config)" ~/project/"$(nn nextnode entry)/$(nn nextnode wrangler_config)"; }
+            platform_wrangler() { ( restore_wrangler_config && cd ~/project/"$(nn nextnode entry)" && set -a && . /home/circleci/platform/platform.env && set +a && WRANGLER_OUTPUT_FILE_PATH=/home/circleci/platform/wrangler.ndjson wrangler "$@" --config "$(nn nextnode wrangler_config)" --env "$NEXTNODE_ENVIRONMENT" ); }
+            ENV
   platform-tools:
     description: Install the platform tools at pinned versions into the platform user's home, from the cache when the versions are unchanged.
     steps:
       - run:
           name: Name the platform tools
-          # First line, npm packages. Second line, the Pulumi CLI and the Cloudflare provider
-          # plugin, released with their SDKs under one version: they are pinned at the versions
-          # the platform package pins, and the driver refuses to run on a drift.
+          # The npm tools are pinned here. The Pulumi CLI and the Cloudflare provider plugin
+          # are released with their SDKs under one version, so they are taken from the
+          # platform package's lockfile: a bump of the SDKs is a bump of the tools.
           command: |
-            echo "@infisical/cli@0.44.9 wrangler@4.152.0 smol-toml@1.9.1 jsonc-parser@3.3.1" > /tmp/tools.txt
-            echo "pulumi@3.272.0 cloudflare@6.23.1" >> /tmp/tools.txt
+            lock=/home/circleci/platform/infrastructure/platform/package-lock.json
+            version() { node -p "require(process.argv[1]).packages['node_modules/' + process.argv[2]].version" -- "$lock" "$1" | grep -xE '[0-9]+\.[0-9]+\.[0-9]+'; }
+            printf 'NPM_TOOLS="@infisical/cli@0.44.9 wrangler@4.152.0"\nPULUMI=%s\nCLOUDFLARE=%s\n' "$(version @pulumi/pulumi)" "$(version @pulumi/cloudflare)" > /tmp/tools.txt
+            cat /tmp/tools.txt
       - restore_cache:
           keys:
             - tools-{{ checksum "/tmp/tools.txt" }}
@@ -78,97 +125,16 @@ commands:
             ENV
             . "$BASH_ENV"
             [ -x ~/.platform/pulumi/pulumi ] && [ -x ~/.platform/node_modules/.bin/wrangler ] && [ -x ~/.platform/node_modules/.bin/infisical ] && exit 0
-            version() { sed -n 2p /tmp/tools.txt | grep -oE "$1@[0-9.]+" | cut -d@ -f2; }
+            . /tmp/tools.txt
             mkdir -p ~/.platform
-            # The CLI archive carries a host for every language; only Node's stays.
-            curl -fsSL --retry 3 "https://github.com/pulumi/pulumi/releases/download/v$(version pulumi)/pulumi-v$(version pulumi)-linux-x64.tar.gz" | tar -xz -C ~/.platform
-            find ~/.platform/pulumi -type f ! -name pulumi ! -name pulumi-language-nodejs ! -name pulumi-resource-pulumi-nodejs -delete
-            # shellcheck disable=SC2046
-            npm install --prefix ~/.platform --no-fund --no-audit $(sed -n 1p /tmp/tools.txt)
-            pulumi plugin install resource cloudflare "$(version cloudflare)"
+            # The CLI archive carries a host for every language; only Node's is extracted.
+            curl -fsSL --retry 3 "https://github.com/pulumi/pulumi/releases/download/v$PULUMI/pulumi-v$PULUMI-linux-x64.tar.gz" | tar -xz -C ~/.platform pulumi/pulumi pulumi/pulumi-language-nodejs pulumi/pulumi-resource-pulumi-nodejs
+            # shellcheck disable=SC2086
+            npm install --prefix ~/.platform --no-fund --no-audit $NPM_TOOLS
+            pulumi plugin install resource cloudflare "$CLOUDFLARE"
       - save_cache:
           key: tools-{{ checksum "/tmp/tools.txt" }}
           paths: [~/.platform]
-  pnpm-store:
-    description: Restore the pnpm store of this pnpm version and lockfile, so the project's install links instead of downloading.
-    steps:
-      - restore_cache:
-          keys:
-            - pnpm-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
-            - pnpm-{{ checksum "/tmp/pnpm.txt" }}-
-  read-toml:
-    description: Read nextnode.toml for the environment into a JSON file, or halt the job when the environment is not declared.
-    steps:
-      - run:
-          name: Read nextnode.toml
-          # CircleCI reserves `<<` in config v2.1, hence the escaped heredoc marker.
-          command: |
-            # The platform's own directory: the project user, in the platform's group, reads
-            # it and writes nothing in it. Secret files in it are further restricted.
-            mkdir -m 750 -p /home/circleci/platform /home/circleci/platform/wrangler
-            cat > /tmp/read-toml.cjs \<<'JS'
-            const { parse } = require(process.env.HOME + "/.platform/node_modules/smol-toml");
-            const jsonc = require(process.env.HOME + "/.platform/node_modules/jsonc-parser");
-            const fs = require("node:fs");
-            const path = require("node:path");
-            const toml = parse(fs.readFileSync("nextnode.toml", "utf8"));
-            const env = process.env.NEXTNODE_ENVIRONMENT;
-            if (!toml.environments?.[env]) {
-              console.error(`nextnode.toml declares no environment "${env}"`);
-              // A missing development environment is a choice, not an error: the job
-              // halts and the workflow goes on.
-              process.exit(env === "development" ? 3 : 1);
-            }
-            if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(toml.project?.name ?? "")) {
-              console.error("nextnode.toml: project.name must be letters, digits, dots, dashes or underscores: it names the Pulumi project");
-              process.exit(1);
-            }
-            const values = {
-              project: toml.project.name,
-              environment: env,
-              infisical_project: toml.project?.infisical_project,
-              entry: toml.deploy?.entry ?? ".",
-              health: toml.deploy?.health ?? "/",
-              migrate: toml.deploy?.migrate ?? "",
-              domain: toml.environments[env].domain,
-            };
-            // Wrangler later reads its configuration with the platform credential, so the
-            // copy the repository committed is kept aside, named explicitly to Wrangler, and
-            // restored before it runs. A build command in it would run project code with
-            // that credential, so it is refused: the build is the project's build script.
-            const configs = fs.readdirSync(values.entry).filter((f) => /^wrangler\.(jsonc?|toml)$/.test(f));
-            if (configs.length !== 1) { console.error(`expected one Wrangler configuration in ${values.entry}, found ${configs.length}`); process.exit(1); }
-            values.wrangler_config = configs[0];
-            const text = fs.readFileSync(path.join(values.entry, configs[0]), "utf8");
-            const wrangler = configs[0].endsWith(".toml") ? parse(text) : jsonc.parse(text, [], { allowTrailingComma: true });
-            if (wrangler.build?.command || wrangler.env?.[env]?.build?.command) {
-              console.error(`${configs[0]} declares a build command: the platform runs the project's build script instead`);
-              process.exit(1);
-            }
-            // Routes and domains are Pulumi's: a route in the Wrangler configuration would be
-            // fought over by every deployment.
-            for (const scope of [wrangler, wrangler.env?.[env] ?? {}]) {
-              if (scope.routes || scope.route) { console.error(`${configs[0]} declares routes: domains come from nextnode.toml, through Pulumi`); process.exit(1); }
-            }
-            // Wrangler deploys the environment's section of its configuration, under the name
-            // that section gives or the top-level name suffixed with the environment.
-            if (!wrangler.env?.[env]) { console.error(`${configs[0]} declares no env.${env}: the platform deploys that section`); process.exit(1); }
-            values.worker_name = wrangler.env[env].name ?? `${wrangler.name}-${env}`;
-            for (const [key, value] of Object.entries(values)) {
-              if (value === undefined) { console.error(`nextnode.toml: missing ${key}`); process.exit(1); }
-              console.log(`${key}=${value}`);
-            }
-            fs.writeFileSync("/home/circleci/platform/nextnode.json", JSON.stringify(values));
-            fs.copyFileSync(path.join(values.entry, configs[0]), path.join("/home/circleci/platform/wrangler", configs[0]));
-            JS
-            node /tmp/read-toml.cjs && status=0 || status=$?
-            if [ "$status" = 3 ]; then circleci-agent step halt; exit 0; fi
-            [ "$status" = 0 ] || exit "$status"
-            # `nn <file> <key>` reads one value of a platform JSON file, in any later step.
-            echo 'nn() { node -p "require(\"/home/circleci/platform/\" + process.argv[1] + \".json\")[process.argv[2]] ?? \"\"" -- "$1" "$2"; }' >> "$BASH_ENV"
-            # Puts the committed Wrangler configuration back in the checkout, for Wrangler. The
-            # destination is unlinked first, not followed: the project may have left a link there.
-            echo 'restore_wrangler_config() { local entry config; entry=$(nn nextnode entry); config=$(nn nextnode wrangler_config); cp --remove-destination "/home/circleci/platform/wrangler/$config" ~/project/"$entry/$config"; }' >> "$BASH_ENV"
   install-pnpm:
     description: Install the pnpm version pinned in the project's package.json.
     steps:
@@ -181,37 +147,24 @@ commands:
             sudo npm install --global --no-fund --no-audit "$pin"
             # The store layout follows the pnpm version, so the store cache is keyed by it too.
             echo "$pin" > /tmp/pnpm.txt
-  resources:
-    description: Converge the environment's Cloudflare resources with the platform package, cloned from this repository at program_ref and run as the platform user.
+  pnpm-store:
+    description: Restore the pnpm store of this pnpm version and lockfile, so the project's install links instead of downloading.
     steps:
-      - run:
-          name: Clone the platform package
-          # Shallow, over HTTPS, no credential: this repository is public and holds no
-          # secret by construction. The platform's git points at no repository by now, so
-          # the variable is lifted for this one command. The clone is recreated every run.
-          command: |
-            rm -rf /home/circleci/platform/infrastructure
-            env -u GIT_DIR git clone -q --depth 1 --branch "<< pipeline.parameters.program_ref >>" https://github.com/NextNodeSolutions/infrastructure.git /home/circleci/platform/infrastructure
-            echo "platform package at $(env -u GIT_DIR git -C /home/circleci/platform/infrastructure rev-parse --short HEAD) (<< pipeline.parameters.program_ref >>)"
       - restore_cache:
           keys:
-            - platform-{{ checksum "/home/circleci/platform/infrastructure/platform/package-lock.json" }}
-      - run:
-          name: Resources
-          # Runs once the Worker of this deployment is uploaded and before the smoke
-          # request: a custom domain attaches to a Worker that exists, and a domain that
-          # serves is never touched before its replacement is there. The driver prints the
-          # stack outputs as JSON, kept for the Worker bindings.
-          command: |
-            cd /home/circleci/platform/infrastructure/platform
-            [ -d node_modules ] || npm ci --omit=dev --no-fund --no-audit
-            set -a; . /home/circleci/platform/platform.env; set +a
-            rm -rf /home/circleci/platform/pulumi && mkdir /home/circleci/platform/pulumi
-            node deploy.ts --spec /home/circleci/platform/nextnode.json --work /home/circleci/platform/pulumi > /home/circleci/platform/resources.json
-            echo "outputs: $(cat /home/circleci/platform/resources.json)"
+            - pnpm-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
+            - pnpm-{{ checksum "/tmp/pnpm.txt" }}-
+  pnpm-install:
+    description: Install the project's dependencies from the frozen lockfile, as the project user, and save the store under this lockfile's key.
+    steps:
+      - project-run:
+          command: pnpm install --frozen-lockfile
+      - project-run:
+          # A store restored from an older lockfile keeps every package it ever held.
+          command: pnpm store prune
       - save_cache:
-          key: platform-{{ checksum "/home/circleci/platform/infrastructure/platform/package-lock.json" }}
-          paths: [/home/circleci/platform/infrastructure/platform/node_modules]
+          key: pnpm-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
+          paths: [~/.pnpm-store]
   isolate-project:
     description: Create the project user, hand it the checkout, and end root access. Sudo then only becomes that user.
     steps:
@@ -229,19 +182,19 @@ commands:
             echo "root access ended, project commands run as $(sudo -nu project id -un)"
             # Git runs what the repository configures (hooks, core.fsmonitor), and Wrangler
             # calls git for version metadata. The platform user has no further use for git,
-            # so its git finds no repository from here on. project-run removes the variable.
+            # so its git finds no repository from here on.
             echo 'export GIT_DIR=/nonexistent' >> "$BASH_ENV"
   forget-job-token:
-    description: Remove the OIDC token from every later step, once the job has no further use for it.
+    description: Remove the OIDC tokens from every later step, once the job has no further use for them.
     steps:
       - run:
-          name: Forget the job token
-          # Every later step sources this file first. The variables go by prefix: CircleCI
-          # adds a generation of the token without notice, and a name list missed one.
+          name: Forget the job tokens
+          # Every later step sources this file first. CircleCI puts several tokens in the
+          # environment under names it chooses, so they go by their common prefix.
           command: |
             { echo 'unset ${!CIRCLE_OIDC_TOKEN@}'; cat "$BASH_ENV"; } > "$BASH_ENV.next" && mv "$BASH_ENV.next" "$BASH_ENV"
   project-run:
-    description: Run a project command as the project user, with the application's secrets and without the job's OIDC tokens.
+    description: Run a project command as the project user, in an environment built from a list, with the application's secrets.
     parameters:
       step:
         type: string
@@ -251,11 +204,15 @@ commands:
     steps:
       - run:
           name: <<# parameters.step >><< parameters.step >><</ parameters.step >><<^ parameters.step >><< parameters.command >><</ parameters.step >>
-          # unset by prefix: every generation of the job token, named or not yet.
+          # Nothing is inherited: the environment holds the names listed here and nothing
+          # else, so a variable CircleCI or a platform step adds never reaches the project.
+          # The values of the kept names are not secret.
           # exec: no process the project user could read ever held the tokens.
-          # GIT_DIR: the platform's git is inert, the project's keeps working in the checkout.
           # umask: the platform user, same group, can read and write what the project builds.
-          command: unset ${!CIRCLE_OIDC_TOKEN@}; exec env -u GIT_DIR HOME=/home/project npm_config_store_dir=/home/circleci/.pnpm-store sudo -nE -u project bash -eo pipefail -c 'umask 002; set -a; [ -f ~/app.env ] && . ~/app.env; set +a; << parameters.command >>'
+          command: |
+            kept=(PATH=/usr/local/bin:/usr/bin:/bin HOME=/home/project CI=true npm_config_store_dir=/home/circleci/.pnpm-store)
+            for name in NEXTNODE_ENVIRONMENT CIRCLE_BRANCH CIRCLE_SHA1 CIRCLE_BUILD_URL CIRCLE_PROJECT_REPONAME; do [ -z "${!name:-}" ] || kept+=("$name=${!name}"); done
+            exec env -i "${kept[@]}" sudo -nE -u project bash -eo pipefail -c 'umask 002; set -a; [ -f ~/app.env ] && . ~/app.env; set +a; << parameters.command >>'
 
 jobs:
   checks:
@@ -265,11 +222,7 @@ jobs:
       - install-pnpm
       - pnpm-store
       - isolate-project
-      - project-run:
-          command: pnpm install --frozen-lockfile
-      - save_cache:
-          key: pnpm-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
-          paths: [~/.pnpm-store]
+      - pnpm-install
       - project-run:
           command: pnpm lint
       - project-run:
@@ -277,13 +230,7 @@ jobs:
       - project-run:
           command: pnpm type-check
       - project-run:
-          step: Tests
-          command: |
-            if node -e "process.exit(require(\"./package.json\").scripts?.test ? 0 : 1)"; then
-              pnpm test
-            else
-              echo "No test script declared in package.json: nothing to run."
-            fi
+          command: pnpm run --if-present test
 
   deploy:
     parameters:
@@ -300,8 +247,9 @@ jobs:
       NEXTNODE_STATE_BUCKET: nextnode-state
     steps:
       - checkout
-      - platform-tools
+      - platform-package
       - read-toml
+      - platform-tools
       - install-pnpm
       - pnpm-store
       - isolate-project
@@ -310,17 +258,9 @@ jobs:
           command: |
             : "${CIRCLE_OIDC_TOKEN_V2:?this job needs the OIDC token}"
             : "${INFISICAL_IDENTITY_ID:?}" "${INFISICAL_PLATFORM_PROJECT_ID:?}"
-            # Reads the vault's JSON export, prints the names, writes shell literals.
-            cat > /tmp/export.cjs \<<'JS'
-            let s = ""; process.stdin.on("data", (d) => s += d).on("end", () => {
-              const secrets = JSON.parse(s);
-              const literal = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
-              process.stdout.write(secrets.map((x) => `export ${x.key}=${literal(x.value)}\n`).join(""));
-              console.error(`${secrets.length} secret(s): ${secrets.map((x) => x.key).join(", ")}`);
-            });
-            JS
             token=$(infisical login --method=oidc-auth --machine-identity-id="$INFISICAL_IDENTITY_ID" --jwt="$CIRCLE_OIDC_TOKEN_V2" --plain --silent)
-            export_project() { infisical export --token "$token" --projectId "$1" --env "$2" --format json --silent | node /tmp/export.cjs; }
+            # The vault's JSON export becomes a file of shell exports; the names are logged, the values never.
+            export_project() { infisical export --token "$token" --projectId "$1" --env "$2" --format json --silent | node /home/circleci/platform/infrastructure/platform/env-file.ts; }
             # The platform project has a single environment: one account serves every
             # deployment environment. Its secrets stay with the platform user.
             echo -n "platform: "; (umask 077; export_project "$INFISICAL_PLATFORM_PROJECT_ID" main > /home/circleci/platform/platform.env)
@@ -328,16 +268,13 @@ jobs:
             # to the project user, in a file only that user reads.
             echo -n "application: "; export_project "$(nn nextnode infisical_project)" "$NEXTNODE_ENVIRONMENT" | sudo -nu project sh -c 'umask 077; cat > /home/project/app.env'
       - forget-job-token
-      - project-run:
-          command: pnpm install --frozen-lockfile
-      - save_cache:
-          key: pnpm-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
-          paths: [~/.pnpm-store]
+      - pnpm-install
       - project-run:
           command: pnpm build
       - project-run:
           step: Migrations
-          # sudo drops BASH_ENV, so a project shell has no `nn`: it reads the JSON itself.
+          # The project's own command, run as the project user: the one value of the
+          # project a shell evaluates. The project's shell has no `nn`, it reads the JSON itself.
           command: migrate=$(node -p "require(\"/home/circleci/platform/nextnode.json\").migrate"); if [ -n "$migrate" ]; then echo "+ $migrate"; eval "$migrate"; else echo "No migrate command in nextnode.toml, nothing to run."; fi
       - run:
           name: Deploy
@@ -345,34 +282,34 @@ jobs:
           # deployment, when nothing serves yet. Every other production deployment is a
           # version without traffic, promoted by a later step. Wrangler runs as the
           # platform user on the committed configuration: it bundles and uploads, it
-          # does not run project code.
+          # does not run project code. What it did is read from its structured output.
           command: |
-            cd "$(nn nextnode entry)"
-            config=$(nn nextnode wrangler_config)
-            restore_wrangler_config
-            set -a; . /home/circleci/platform/platform.env; set +a
-            workers_dev_url() { grep -oE "https://[a-z0-9.-]+\.workers\.dev" /home/circleci/platform/wrangler.log | head -1 || true; }
-            record() { node -e 'require("node:fs").writeFileSync("/home/circleci/platform/deploy.json", JSON.stringify({ version: process.argv[1], url: process.argv[2] }))' -- "$1" "$2"; }
-            direct() {
-              wrangler deploy --config "$config" --env "$NEXTNODE_ENVIRONMENT" 2>&1 | tee /home/circleci/platform/wrangler.log
-              # The health check targets the workers.dev URL when there is one, else the declared domain.
-              url=$(workers_dev_url)
-              record "" "${url:-https://$(nn nextnode domain)}"
-            }
-            if [ "$NEXTNODE_ENVIRONMENT" = development ]; then direct; exit 0; fi
-            if ! listed=$(wrangler versions list --config "$config" --env "$NEXTNODE_ENVIRONMENT" 2>&1); then
+            rm -f /home/circleci/platform/wrangler.ndjson
+            if [ "$NEXTNODE_ENVIRONMENT" = development ]; then
+              platform_wrangler deploy
+            elif listed=$(platform_wrangler versions list 2>&1); then
+              platform_wrangler versions upload --message "$CIRCLE_SHA1"
+            elif printf '%s\n' "$listed" | grep -q "code: 10007"; then
               # 10007 is Cloudflare's code for a Worker that does not exist. Any other error stops here.
-              printf '%s\n' "$listed" | grep -q "code: 10007" || { printf '%s\n' "$listed"; exit 1; }
               echo "First deployment of this Worker: nothing serves yet, deployed directly."
-              direct; exit 0
+              platform_wrangler deploy
+            else
+              printf '%s\n' "$listed"; exit 1
             fi
-            wrangler versions upload --config "$config" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" 2>&1 | tee /home/circleci/platform/wrangler.log
-            version=$(grep -oE "Worker Version ID: [0-9a-f-]+" /home/circleci/platform/wrangler.log | head -1 | cut -d" " -f4 || true)
-            preview=$(workers_dev_url)
-            [ -n "$version" ] || { echo "wrangler printed no version id"; exit 1; }
-            [ -n "$preview" ] || { echo "wrangler printed no preview URL: the production Worker needs preview_urls"; exit 1; }
-            record "$version" "$preview"
-      - resources
+            node /home/circleci/platform/infrastructure/platform/deployed.ts --wrangler-output /home/circleci/platform/wrangler.ndjson --domain "$(nn nextnode domain)" > /home/circleci/platform/deploy.json
+            cat /home/circleci/platform/deploy.json
+      - run:
+          name: Resources
+          # Runs once the Worker of this deployment is uploaded and before the smoke
+          # request: a custom domain attaches to a Worker that exists, and a domain that
+          # serves is never touched before its replacement is there. The driver prints the
+          # stack outputs as JSON, kept for the Worker bindings.
+          command: |
+            cd /home/circleci/platform/infrastructure/platform
+            set -a; . /home/circleci/platform/platform.env; set +a
+            rm -rf /home/circleci/platform/pulumi && mkdir /home/circleci/platform/pulumi
+            node deploy.ts --spec /home/circleci/platform/nextnode.json --work /home/circleci/platform/pulumi > /home/circleci/platform/resources.json
+            echo "outputs: $(cat /home/circleci/platform/resources.json)"
       - run:
           name: Smoke
           command: |
@@ -383,11 +320,7 @@ jobs:
           command: |
             version=$(nn deploy version)
             [ -n "$version" ] || { echo "Deployed directly, already serving."; exit 0; }
-            cd "$(nn nextnode entry)"
-            config=$(nn nextnode wrangler_config)
-            restore_wrangler_config
-            set -a; . /home/circleci/platform/platform.env; set +a
-            wrangler versions deploy "$version@100%" --config "$config" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" --yes
+            platform_wrangler versions deploy "$version@100%" --message "$CIRCLE_SHA1" --yes
 
   probe:
     # The boundary's regression test. Every step is an attack: the project's, run
@@ -401,10 +334,11 @@ jobs:
       NEXTNODE_ENVIRONMENT: production
     steps:
       - checkout
-      - platform-tools
+      - platform-package
       - read-toml
+      - platform-tools
       - run:
-          name: "Probe: a second Wrangler configuration, a build command and a route are refused"
+          name: "Probe: a second Wrangler configuration, a build command, a route and a nameless Worker are refused"
           # Each attack on a fresh copy of the checkout. A refusal is matched on its
           # reason, so a crash of the reader does not pass for a refusal, and an
           # accepted attack ends the step at once: in an && list, set -e would let it pass.
@@ -413,17 +347,18 @@ jobs:
             case "$config" in *.json|*.jsonc) ;; *) echo "this probe edits a JSON configuration, the canary commits $config"; exit 1;; esac
             fresh() { work=$(mktemp -d) && cp -r ~/project/. "$work" && cd "$work"; }
             refused() {
-              if out=$(node /tmp/read-toml.cjs 2>&1); then echo "accepted: $1"; exit 1; fi
-              printf '%s\n' "$out" | grep -q "$2" || { echo "read-toml failed on $1 for another reason:"; printf '%s\n' "$out"; exit 1; }
+              if out=$(node /home/circleci/platform/infrastructure/platform/read.ts --environment "$NEXTNODE_ENVIRONMENT" --platform "$work/platform" 2>&1); then echo "accepted: $1"; exit 1; fi
+              printf '%s\n' "$out" | grep -q "$2" || { echo "the read step failed on $1 for another reason:"; printf '%s\n' "$out"; exit 1; }
               echo "refused: $1"
             }
-            # Adds keys to the committed configuration through a parser, merging environment sections.
-            with() { node -e 'const fs = require("node:fs"), jsonc = require(process.env.HOME + "/.platform/node_modules/jsonc-parser"); const file = process.argv[1]; const config = jsonc.parse(fs.readFileSync(file, "utf8"), [], { allowTrailingComma: true }); const extra = JSON.parse(process.argv[2]); const env = Object.fromEntries(Object.entries(extra.env ?? {}).map(([name, section]) => [name, { ...config.env?.[name], ...section }])); fs.writeFileSync(file, JSON.stringify({ ...config, ...extra, env: { ...config.env, ...env } }))' -- "$entry/$config" "$1"; }
+            # Rewrites the committed configuration through a parser, merging environment sections.
+            with() { node -e 'const fs = require("node:fs"), jsonc = require("/home/circleci/platform/infrastructure/platform/node_modules/jsonc-parser"); const file = process.argv[1]; const config = jsonc.parse(fs.readFileSync(file, "utf8"), [], { allowTrailingComma: true }); const extra = JSON.parse(process.argv[2]); const env = Object.fromEntries(Object.entries(extra.env ?? {}).map(([name, section]) => [name, { ...config.env?.[name], ...section }])); fs.writeFileSync(file, JSON.stringify({ ...config, ...extra, env: { ...config.env, ...env } }))' -- "$entry/$config" "$1"; }
             fresh; touch "$entry/wrangler.toml"; refused "a second Wrangler configuration" "expected one Wrangler configuration"
             fresh; with '{ "build": { "command": "true" } }'; refused "a build command" "declares a build command"
             fresh; with "{ \"env\": { \"$NEXTNODE_ENVIRONMENT\": { \"build\": { \"command\": \"true\" } } } }"; refused "a build command of the environment" "declares a build command"
             fresh; with '{ "routes": ["probe.example/*"] }'; refused "a route" "declares routes"
             fresh; with "{ \"env\": { \"$NEXTNODE_ENVIRONMENT\": { \"route\": \"probe.example/*\" } } }"; refused "a route of the environment" "declares routes"
+            fresh; with "{ \"name\": null, \"env\": { \"$NEXTNODE_ENVIRONMENT\": { \"name\": null } } }"; refused "a Worker without a name" "declares no name"
       - run:
           name: "Probe: a value read from a platform file stays text"
           command: |
@@ -437,18 +372,24 @@ jobs:
             echo 'export APP_PROBE=application' | sudo -nu project sh -c 'umask 077; cat > /home/project/app.env'
             # Loaded the way the deployment steps load it: nothing of it may reach a later step.
             set -a; . /home/circleci/platform/platform.env; set +a
-            # Project shells have no BASH_ENV: the path reaches the probes through a platform file.
-            node -e 'require("node:fs").writeFileSync("/home/circleci/platform/probe.json", JSON.stringify({ bash_env: process.env.BASH_ENV }))'
+            # A variable of the platform steps, exported to every later one: the project must not see it.
+            echo 'export PLATFORM_STEP_PROBE=platform' >> "$BASH_ENV"
+            # Project shells have no BASH_ENV: the path, and the agent's binaries, reach the probes through a platform file.
+            node -e 'require("node:fs").writeFileSync("/home/circleci/platform/probe.json", JSON.stringify({ bash_env: process.env.BASH_ENV, agents: process.argv.slice(1).join(" ") }))' -- $(command -v circleci circleci-agent)
             stat -c '%U:%G %a %n' "$BASH_ENV" /home/circleci/platform /home/circleci/platform/platform.env
             # What a same-user process would read: the token is there, and the probes must not reach it.
             grep -Eqsaz "^CIRCLE_OIDC_TOKEN[A-Z0-9_]*=" "/proc/$$/environ" || { echo "this platform step does not hold the token in /proc/$$/environ: the process probe would prove nothing"; exit 1; }
       - forget-job-token
       - run:
-          name: "Probe: the job token is gone from the platform steps"
+          name: "Probe: the job tokens are gone from the platform steps"
           command: '[ -z "${!CIRCLE_OIDC_TOKEN@}" ]'
       - project-run:
-          step: "Probe: the project receives its own secrets and not the platform's"
-          command: '[ "$APP_PROBE" = application ] && [ -z "${PLATFORM_PROBE:-}" ]'
+          step: "Probe: the project receives its own secrets and nothing of the platform's environment"
+          command: '[ "$APP_PROBE" = application ] && [ -z "${PLATFORM_PROBE:-}" ] && [ -z "${PLATFORM_STEP_PROBE:-}" ]'
+      - project-run:
+          step: "Probe: the project's environment holds only the listed names"
+          # What sudo and bash add to the list is named here; anything else is a leak.
+          command: 'extra=$(env | cut -d= -f1 | grep -vxE "PATH|HOME|CI|npm_config_store_dir|NEXTNODE_ENVIRONMENT|CIRCLE_(BRANCH|SHA1|BUILD_URL|PROJECT_REPONAME)|APP_PROBE|SUDO_(COMMAND|USER|UID|GID|HOME)|USER|LOGNAME|MAIL|SHELL|SHLVL|PWD|OLDPWD|TERM|LANG|LC_[A-Z]+|_" || true); [ -z "$extra" ] || { echo "not in the list: $extra"; exit 1; }'
       - project-run:
           step: "Probe: the project finds no job token in its environment, by name or by shape"
           # Anchored on a name: sudo records the command, pattern included, in SUDO_COMMAND.
@@ -460,17 +401,22 @@ jobs:
           step: "Probe: no file the project can read holds a token"
           command: 'file=$(node -p "require(\"/home/circleci/platform/probe.json\").bash_env"); [ -n "$file" ]; found=$(grep -Elrs "eyJ[A-Za-z0-9_-]+\.eyJ" /home/circleci/platform "$file" || true); [ -z "$found" ] || { echo "a token-shaped value in: $found"; exit 1; }'
       - project-run:
+          step: "Probe: the project cannot have the agent mint a job token"
+          # The agent serves `circleci run oidc get` to the job's steps. Called from the
+          # project's environment, every agent binary must fail or print no token.
+          command: 'for agent in $(node -p "require(\"/home/circleci/platform/probe.json\").agents"); do if out=$("$agent" run oidc get 2>&1) && printf "%s" "$out" | grep -Eq "eyJ[A-Za-z0-9_-]+\.eyJ"; then echo "$agent minted a token for the project"; exit 1; fi; echo "refused: $agent"; done'
+      - project-run:
           step: "Probe: the project cannot read the platform's secrets"
           command: '! cat /home/circleci/platform/platform.env'
       - project-run:
           step: "Probe: the project cannot write where the platform keeps its files or loads code"
-          command: 'for d in /home/circleci /home/circleci/.platform /home/circleci/.platform/node_modules /home/circleci/.platform/pulumi-home /home/circleci/platform; do [ -d "$d" ] || { echo "missing: $d"; exit 1; }; if touch "$d/probe" 2> /dev/null; then echo "writable: $d"; exit 1; fi; done'
+          command: 'for d in /home/circleci /home/circleci/.platform /home/circleci/.platform/node_modules /home/circleci/.platform/pulumi /home/circleci/.platform/pulumi-home /home/circleci/platform /home/circleci/platform/infrastructure /home/circleci/platform/infrastructure/platform/node_modules; do [ -d "$d" ] || { echo "missing: $d"; exit 1; }; if touch "$d/probe" 2> /dev/null; then echo "writable: $d"; exit 1; fi; done'
       - project-run:
           step: "Probe: the project cannot append to the file every platform step sources"
           command: 'file=$(node -p "require(\"/home/circleci/platform/probe.json\").bash_env"); [ -n "$file" ] && ! sh -c "echo probe >> $file"'
       - run:
           name: "Probe: the sourced file is the platform user's and holds only the pipeline's text"
-          command: '[ "$(stat -c %U "$BASH_ENV")" = circleci ] && [ -z "$(find "$BASH_ENV" -perm /022)" ] && ! grep -Eq "^probe$|PLATFORM_PROBE|eyJ[A-Za-z0-9_-]+\.eyJ" "$BASH_ENV"'
+          command: '[ "$(stat -c %U "$BASH_ENV")" = circleci ] && [ -z "$(find "$BASH_ENV" -perm /022)" ] && ! grep -Eq "^probe$|PLATFORM_PROBE=|eyJ[A-Za-z0-9_-]+\.eyJ" "$BASH_ENV"'
       - project-run:
           step: "Probe: the project cannot become another user"
           command: '! sudo -n true && ! sudo -nu circleci true'

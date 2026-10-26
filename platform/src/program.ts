@@ -9,7 +9,7 @@ export async function program(spec: Spec, accountId: string): Promise<Record<str
   const zone = cloudflare.getZonesOutput({ account: { id: accountId } }).apply(({ results }) => {
     const holding = results.filter((z) => spec.domain === z.name || spec.domain.endsWith(`.${z.name}`));
     if (holding.length === 0) throw new Error(`${spec.domain}: no zone of the account holds this domain`);
-    return holding.sort((a, b) => b.name.length - a.name.length)[0]!;
+    return holding.reduce((longest, zone) => (zone.name.length > longest.name.length ? zone : longest));
   });
 
   // The environment's domain, attached to the Worker Wrangler has just uploaded. The
