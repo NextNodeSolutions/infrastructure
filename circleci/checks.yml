@@ -174,6 +174,7 @@ commands:
             mkdir -p /tmp/pulumi && cd /tmp/pulumi
             ln -sfn ~/.platform/node_modules node_modules
             printf 'name: %s\nruntime:\n  name: nodejs\n  options:\n    typescript: false\n' "$(nn nextnode project)" > Pulumi.yaml
+            echo '{ "main": "index.js" }' > package.json
             cat > index.js \<<'JS'
             // The Cloudflare resources of one environment of one project. Inputs: the JSON that
             // read-toml wrote from nextnode.toml, the platform account, and whether the Worker
@@ -214,7 +215,9 @@ commands:
             code=$(curl -s -o /dev/null -w '%{http_code}' -K <(auth) "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/services/$(nn nextnode worker_name)")
             case $code in 200) exists=true ;; 404) exists=false ;; *) echo "Cloudflare answered $code to the Worker lookup"; exit 1 ;; esac
             node -e 'require("node:fs").writeFileSync("/tmp/worker.json", JSON.stringify({ exists: process.argv[1] === "true" }))' -- "$exists"
-            WORKER_EXISTS=$exists pulumi up --yes --skip-preview --non-interactive --suppress-progress
+            # Refreshed first: what disappeared outside Pulumi, such as a domain that went with
+            # its Worker, leaves the state instead of failing its own deletion.
+            WORKER_EXISTS=$exists pulumi up --refresh --yes --skip-preview --non-interactive --suppress-progress
   isolate-project:
     description: Create the project user, hand it the checkout, and end root access. Sudo then only becomes that user.
     steps:

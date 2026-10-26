@@ -133,6 +133,7 @@ Development deploys directly to all traffic. Production uploads a version that r
 | `checks` fails | Nothing deployed. The pull request shows the failing step. |
 | Vault login fails | Nothing deployed. Either the identity binding rejects the ref, or the identity is not a member of the project. The step prints the Infisical error. |
 | Pulumi fails part way | The stack state records what was created. The next run converges, because the program is declarative. The lock is released when the process ends. |
+| A resource was deleted outside Pulumi, by hand or with the Worker it was attached to | The refresh that precedes every update drops it from the state, and the program recreates what it still declares. |
 | The job ends between the upload of a first Worker and the attachment of its domain | The Worker serves on its workers.dev URL only. The next run finds the Worker and attaches the domain before the build. |
 | Migration fails | Resources are up to date, the previous Worker still serves. The project's migration tool owns the recovery. |
 | Development smoke fails | The development Worker has already been replaced, production is untouched. |
