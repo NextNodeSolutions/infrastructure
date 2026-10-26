@@ -37,6 +37,31 @@ executors:
     resource_class: small
 
 commands:
+  platform-tools:
+    description: Install the platform tools at pinned versions into the platform user's home, from the cache when the versions are unchanged.
+    steps:
+      - run:
+          name: Name the platform tools
+          command: echo "@infisical/cli@0.44.9 wrangler@4.152.0 smol-toml@1.9.1 jsonc-parser@3.3.1" > /tmp/tools.txt
+      - restore_cache:
+          keys:
+            - tools-{{ checksum "/tmp/tools.txt" }}
+      - run:
+          name: Install the platform tools, unless cached
+          command: |
+            # shellcheck disable=SC2046
+            [ -x ~/.platform/node_modules/.bin/wrangler ] && [ -x ~/.platform/node_modules/.bin/infisical ] || npm install --prefix ~/.platform --no-fund --no-audit $(cat /tmp/tools.txt)
+            echo 'export PATH=$HOME/.platform/node_modules/.bin:$PATH' >> "$BASH_ENV"
+      - save_cache:
+          key: tools-{{ checksum "/tmp/tools.txt" }}
+          paths: [~/.platform]
+  pnpm-store:
+    description: Restore the pnpm store of this pnpm version and lockfile, so the project's install links instead of downloading.
+    steps:
+      - restore_cache:
+          keys:
+            - pnpm-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
+            - pnpm-{{ checksum "/tmp/pnpm.txt" }}-
   read-toml:
     description: Read nextnode.toml for the environment into a JSON file, or halt the job when the environment is not declared.
     steps:
@@ -44,10 +69,9 @@ commands:
           name: Read nextnode.toml
           # CircleCI reserves `<<` in config v2.1, hence the escaped heredoc marker.
           command: |
-            npm install --prefix /tmp/toml --no-fund --no-audit --silent smol-toml@1.9.1 jsonc-parser@3.3.1
             cat > /tmp/read-toml.cjs \<<'JS'
-            const { parse } = require("/tmp/toml/node_modules/smol-toml");
-            const jsonc = require("/tmp/toml/node_modules/jsonc-parser");
+            const { parse } = require(process.env.HOME + "/.platform/node_modules/smol-toml");
+            const jsonc = require(process.env.HOME + "/.platform/node_modules/jsonc-parser");
             const fs = require("node:fs");
             const path = require("node:path");
             const toml = parse(fs.readFileSync("nextnode.toml", "utf8"));
@@ -102,6 +126,8 @@ commands:
             # A version, with an optional integrity hash. Not a URL, a tag or a path.
             [[ $pin =~ ^pnpm@[0-9]+\.[0-9]+\.[0-9]+(\+sha[0-9]+\.[0-9a-f]+)?$ ]] || { echo "package.json must pin pnpm as pnpm@<version> in packageManager, got '$pin'"; exit 1; }
             sudo npm install --global --no-fund --no-audit "$pin"
+            # The store layout follows the pnpm version, so the store cache is keyed by it too.
+            echo "$pin" > /tmp/pnpm.txt
   isolate-project:
     description: Create the project user, hand it the checkout, and end root access. Sudo then only becomes that user.
     steps:
@@ -110,6 +136,8 @@ commands:
           command: |
             sudo useradd --create-home --gid circleci --shell /bin/bash project
             sudo chmod -R g+w .
+            # The pnpm store is the platform user's, restored from the cache; the project user adds to it.
+            mkdir -p ~/.pnpm-store && chmod -R g+ws ~/.pnpm-store
             echo 'circleci ALL=(project) NOPASSWD:SETENV: ALL' | sudo tee /etc/sudoers.d/60-project > /dev/null
             sudo visudo -cf /etc/sudoers.d/60-project
             sudo rm /etc/sudoers.d/50-circleci
@@ -133,7 +161,7 @@ commands:
           # exec: no process the project user could read ever held the tokens.
           # GIT_DIR: the platform's git is inert, the project's keeps working in the checkout.
           # umask: the platform user, same group, can read and write what the project builds.
-          command: exec env -u CIRCLE_OIDC_TOKEN -u CIRCLE_OIDC_TOKEN_V2 -u GIT_DIR HOME=/home/project sudo -nE -u project bash -eo pipefail -c 'umask 002; set -a; [ -f ~/app.env ] && . ~/app.env; set +a; << parameters.command >>'
+          command: exec env -u CIRCLE_OIDC_TOKEN -u CIRCLE_OIDC_TOKEN_V2 -u GIT_DIR HOME=/home/project npm_config_store_dir=/home/circleci/.pnpm-store sudo -nE -u project bash -eo pipefail -c 'umask 002; set -a; [ -f ~/app.env ] && . ~/app.env; set +a; << parameters.command >>'
 
 jobs:
   checks:
@@ -141,9 +169,13 @@ jobs:
     steps:
       - checkout
       - install-pnpm
+      - pnpm-store
       - isolate-project
       - project-run:
           command: pnpm install --frozen-lockfile
+      - save_cache:
+          key: pnpm-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
+          paths: [~/.pnpm-store]
       - project-run:
           command: pnpm lint
       - project-run:
@@ -173,11 +205,10 @@ jobs:
       INFISICAL_PLATFORM_PROJECT_ID: 721a5f71-3801-40e2-a06d-a4a9b431e1c7
     steps:
       - checkout
+      - platform-tools
       - read-toml
       - install-pnpm
-      - run:
-          name: Install the platform tools
-          command: sudo npm install --global --no-fund --no-audit @infisical/cli@0.44.9 wrangler@4.152.0
+      - pnpm-store
       - isolate-project
       - run:
           name: Fetch the secrets of << parameters.environment >>
@@ -205,6 +236,9 @@ jobs:
             { echo 'unset CIRCLE_OIDC_TOKEN CIRCLE_OIDC_TOKEN_V2'; cat "$BASH_ENV"; } > "$BASH_ENV.next" && mv "$BASH_ENV.next" "$BASH_ENV"
       - project-run:
           command: pnpm install --frozen-lockfile
+      - save_cache:
+          key: pnpm-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
+          paths: [~/.pnpm-store]
       - project-run:
           command: pnpm build
       - project-run:
