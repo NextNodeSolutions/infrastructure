@@ -56,12 +56,12 @@ commands:
           key: tools-{{ checksum "/tmp/tools.txt" }}
           paths: [~/.platform]
   pnpm-store:
-    description: Restore the pnpm store of the lockfile, so the project's install links instead of downloading.
+    description: Restore the pnpm store of this pnpm version and lockfile, so the project's install links instead of downloading.
     steps:
       - restore_cache:
           keys:
-            - pnpm-{{ checksum "pnpm-lock.yaml" }}
-            - pnpm-
+            - pnpm-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
+            - pnpm-{{ checksum "/tmp/pnpm.txt" }}-
   read-toml:
     description: Read nextnode.toml for the environment into a JSON file, or halt the job when the environment is not declared.
     steps:
@@ -126,6 +126,8 @@ commands:
             # A version, with an optional integrity hash. Not a URL, a tag or a path.
             [[ $pin =~ ^pnpm@[0-9]+\.[0-9]+\.[0-9]+(\+sha[0-9]+\.[0-9a-f]+)?$ ]] || { echo "package.json must pin pnpm as pnpm@<version> in packageManager, got '$pin'"; exit 1; }
             sudo npm install --global --no-fund --no-audit "$pin"
+            # The store layout follows the pnpm version, so the store cache is keyed by it too.
+            echo "$pin" > /tmp/pnpm.txt
   isolate-project:
     description: Create the project user, hand it the checkout, and end root access. Sudo then only becomes that user.
     steps:
@@ -172,7 +174,7 @@ jobs:
       - project-run:
           command: pnpm install --frozen-lockfile
       - save_cache:
-          key: pnpm-{{ checksum "pnpm-lock.yaml" }}
+          key: pnpm-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
           paths: [~/.pnpm-store]
       - project-run:
           command: pnpm lint
@@ -235,7 +237,7 @@ jobs:
       - project-run:
           command: pnpm install --frozen-lockfile
       - save_cache:
-          key: pnpm-{{ checksum "pnpm-lock.yaml" }}
+          key: pnpm-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
           paths: [~/.pnpm-store]
       - project-run:
           command: pnpm build
