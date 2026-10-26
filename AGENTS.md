@@ -35,6 +35,8 @@ A change that weakens one is wrong, even when it compiles.
 
 There is no local validator for the configuration in this repository. A change to a pipeline file is checked by running the canary's pipeline from the branch, through the CircleCI API with the configuration branch set to the pull request branch and the checkout set to the canary's `main`, and by reading the job outputs. A green canary run is the check that a pull request cites.
 
+A change to the boundary between the platform and the project, which is anything about users, sudo, the sourced file, the platform's directory, the vault step or what Wrangler reads, cites a green run of the probe job as well, started on the canary with the `probe` pipeline parameter. Before its first push it goes through the adversarial reviews at the highest effort the harness offers, in Claude Code `/code-review xhigh` then `/security-review`, and a finding is fixed by closing the whole class of channel it used, never that one finding. The pull request names each guarantee it touches and the run that covers it.
+
 A documentation change is checked with the docs checker of the `project-docs` skill, which renders every Mermaid block and follows every relative link.
 
 ## Commits
@@ -59,6 +61,7 @@ The docs carry concepts, flows, states, rules and reasons. They never copy what 
 ## Extending
 
 - **A new job** goes into the single workflow with its `requires` chain and, when it needs the vault, the same login and export steps as the deployment job. It is validated on the canary before merge.
+- **A new guarantee, or a new mechanism behind one,** comes with its probe: a step of the probe job that runs the attack as the project would and passes only when the attack fails. The docs name the guarantee, the probe is what keeps it true on every change.
 - **A new resource kind** is a Pulumi resource keyed by a `nextnode.toml` entry, written in the program the deployment job carries, with its identifier exposed as a stack output for the Worker bindings. Its failure mode is added to the table on the architecture page.
 - **A new deployment target** is a port beside the Wrangler one, behind the same job and the same `nextnode.toml` keys where they apply.
 - **A new project** is registered by the registration script, never by clicking through the three dashboards.
