@@ -25,8 +25,9 @@
 #
 # Nothing the project controls is ever evaluated by a shell. Values read from
 # nextnode.toml and produced by a deployment travel between steps as JSON files
-# owned by the platform user, read with `nn`. BASH_ENV carries only text written
-# here.
+# read with `nn`, in a directory of the platform user's home that the project
+# user cannot write: a file created in a shared place after project code ran
+# could be the project's. BASH_ENV carries only text written here.
 
 version: 2.1
 
@@ -82,6 +83,9 @@ commands:
           name: Read nextnode.toml
           # CircleCI reserves `<<` in config v2.1, hence the escaped heredoc marker.
           command: |
+            # The platform's own directory: the project user, in the platform's group, reads
+            # it and writes nothing in it. Secret files in it are further restricted.
+            mkdir -m 750 -p /home/circleci/platform /home/circleci/platform/wrangler
             cat > /tmp/read-toml.cjs \<<'JS'
             const { parse } = require(process.env.HOME + "/.platform/node_modules/smol-toml");
             const jsonc = require(process.env.HOME + "/.platform/node_modules/jsonc-parser");
@@ -133,15 +137,14 @@ commands:
               if (value === undefined) { console.error(`nextnode.toml: missing ${key}`); process.exit(1); }
               console.log(`${key}=${value}`);
             }
-            fs.writeFileSync("/tmp/nextnode.json", JSON.stringify(values));
-            fs.mkdirSync("/tmp/wrangler", { recursive: true });
-            fs.copyFileSync(path.join(values.entry, configs[0]), path.join("/tmp/wrangler", configs[0]));
+            fs.writeFileSync("/home/circleci/platform/nextnode.json", JSON.stringify(values));
+            fs.copyFileSync(path.join(values.entry, configs[0]), path.join("/home/circleci/platform/wrangler", configs[0]));
             JS
             node /tmp/read-toml.cjs && status=0 || status=$?
             if [ "$status" = 3 ]; then circleci-agent step halt; exit 0; fi
             [ "$status" = 0 ] || exit "$status"
             # `nn <file> <key>` reads one value of a platform JSON file, in any later step.
-            echo 'nn() { node -p "require(\"/tmp/\" + process.argv[1] + \".json\")[process.argv[2]] ?? \"\"" -- "$1" "$2"; }' >> "$BASH_ENV"
+            echo 'nn() { node -p "require(\"/home/circleci/platform/\" + process.argv[1] + \".json\")[process.argv[2]] ?? \"\"" -- "$1" "$2"; }' >> "$BASH_ENV"
   install-pnpm:
     description: Install the pnpm version pinned in the project's package.json.
     steps:
@@ -163,19 +166,20 @@ commands:
           # request: a custom domain attaches to a Worker that exists, and a domain that
           # serves is never touched before its replacement is there.
           command: |
-            set -a; . /tmp/platform.env; set +a
+            set -a; . /home/circleci/platform/platform.env; set +a
             auth() { printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN"; }
-            mkdir -p /tmp/pulumi && cd /tmp/pulumi
+            # Recreated empty: nothing that was there before is loaded.
+            rm -rf /home/circleci/platform/pulumi && mkdir /home/circleci/platform/pulumi && cd /home/circleci/platform/pulumi
             ln -sfn ~/.platform/node_modules node_modules
             # JSON is YAML: the project name goes through a serializer, never into a template.
-            node -e 'require("node:fs").writeFileSync("Pulumi.yaml", JSON.stringify({ name: require("/tmp/nextnode.json").project, runtime: { name: "nodejs", options: { typescript: false } } }))'
+            node -e 'require("node:fs").writeFileSync("Pulumi.yaml", JSON.stringify({ name: require("/home/circleci/platform/nextnode.json").project, runtime: { name: "nodejs", options: { typescript: false } } }))'
             echo '{ "main": "index.js" }' > package.json
             cat > index.js \<<'JS'
             // The Cloudflare resources of one environment of one project. Inputs: the JSON that
             // read-toml wrote from nextnode.toml and the platform account. Resources keyed by
             // nextnode.toml entries are added here.
             const cloudflare = require("@pulumi/cloudflare");
-            const spec = require("/tmp/nextnode.json");
+            const spec = require("/home/circleci/platform/nextnode.json");
             const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 
             // The zone is the longest registered name of the account that the domain belongs to.
@@ -307,7 +311,7 @@ jobs:
             export_project() { infisical export --token "$token" --projectId "$1" --env "$2" --format json --silent | node /tmp/export.cjs; }
             # The platform project has a single environment: one account serves every
             # deployment environment. Its secrets stay with the platform user.
-            echo -n "platform: "; (umask 077; export_project "$INFISICAL_PLATFORM_PROJECT_ID" main > /tmp/platform.env)
+            echo -n "platform: "; (umask 077; export_project "$INFISICAL_PLATFORM_PROJECT_ID" main > /home/circleci/platform/platform.env)
             # The application project carries the per-environment split. Its secrets go
             # to the project user, in a file only that user reads.
             echo -n "application: "; export_project "$(nn nextnode infisical_project)" "$NEXTNODE_ENVIRONMENT" | sudo -nu project sh -c 'umask 077; cat > /home/project/app.env'
@@ -323,7 +327,7 @@ jobs:
       - project-run:
           step: Migrations
           # sudo drops BASH_ENV, so a project shell has no `nn`: it reads the JSON itself.
-          command: migrate=$(node -p "require(\"/tmp/nextnode.json\").migrate"); if [ -n "$migrate" ]; then echo "+ $migrate"; eval "$migrate"; else echo "No migrate command in nextnode.toml, nothing to run."; fi
+          command: migrate=$(node -p "require(\"/home/circleci/platform/nextnode.json\").migrate"); if [ -n "$migrate" ]; then echo "+ $migrate"; eval "$migrate"; else echo "No migrate command in nextnode.toml, nothing to run."; fi
       - run:
           name: Deploy
           # Development replaces what serves, and so does a production Worker's first
@@ -334,12 +338,12 @@ jobs:
           command: |
             cd "$(nn nextnode entry)"
             config=$(nn nextnode wrangler_config)
-            rm -f "$config" && cp "/tmp/wrangler/$config" "$config"
-            set -a; . /tmp/platform.env; set +a
-            workers_dev_url() { grep -oE "https://[a-z0-9.-]+\.workers\.dev" /tmp/wrangler.log | head -1 || true; }
-            record() { node -e 'require("node:fs").writeFileSync("/tmp/deploy.json", JSON.stringify({ version: process.argv[1], url: process.argv[2] }))' -- "$1" "$2"; }
+            rm -f "$config" && cp "/home/circleci/platform/wrangler/$config" "$config"
+            set -a; . /home/circleci/platform/platform.env; set +a
+            workers_dev_url() { grep -oE "https://[a-z0-9.-]+\.workers\.dev" /home/circleci/platform/wrangler.log | head -1 || true; }
+            record() { node -e 'require("node:fs").writeFileSync("/home/circleci/platform/deploy.json", JSON.stringify({ version: process.argv[1], url: process.argv[2] }))' -- "$1" "$2"; }
             direct() {
-              wrangler deploy --config "$config" --env "$NEXTNODE_ENVIRONMENT" 2>&1 | tee /tmp/wrangler.log
+              wrangler deploy --config "$config" --env "$NEXTNODE_ENVIRONMENT" 2>&1 | tee /home/circleci/platform/wrangler.log
               # The health check targets the workers.dev URL when there is one, else the declared domain.
               url=$(workers_dev_url)
               record "" "${url:-https://$(nn nextnode domain)}"
@@ -351,8 +355,8 @@ jobs:
               echo "First deployment of this Worker: nothing serves yet, deployed directly."
               direct; exit 0
             fi
-            wrangler versions upload --config "$config" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" 2>&1 | tee /tmp/wrangler.log
-            version=$(grep -oE "Worker Version ID: [0-9a-f-]+" /tmp/wrangler.log | head -1 | cut -d" " -f4 || true)
+            wrangler versions upload --config "$config" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" 2>&1 | tee /home/circleci/platform/wrangler.log
+            version=$(grep -oE "Worker Version ID: [0-9a-f-]+" /home/circleci/platform/wrangler.log | head -1 | cut -d" " -f4 || true)
             preview=$(workers_dev_url)
             [ -n "$version" ] || { echo "wrangler printed no version id"; exit 1; }
             [ -n "$preview" ] || { echo "wrangler printed no preview URL: the production Worker needs preview_urls"; exit 1; }
@@ -370,8 +374,8 @@ jobs:
             [ -n "$version" ] || { echo "Deployed directly, already serving."; exit 0; }
             cd "$(nn nextnode entry)"
             config=$(nn nextnode wrangler_config)
-            rm -f "$config" && cp "/tmp/wrangler/$config" "$config"
-            set -a; . /tmp/platform.env; set +a
+            rm -f "$config" && cp "/home/circleci/platform/wrangler/$config" "$config"
+            set -a; . /home/circleci/platform/platform.env; set +a
             wrangler versions deploy "$version@100%" --config "$config" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" --yes
 
 workflows:
