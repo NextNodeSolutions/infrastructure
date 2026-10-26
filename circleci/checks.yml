@@ -76,7 +76,7 @@ commands:
           # project code: the project user, in the platform's group, reads it and writes
           # nothing in it. Secret files in it are further restricted.
           command: |
-            : "${CIRCLE_PROJECT_REPONAME:?this job needs the repository's name}" "${CIRCLE_PROJECT_ID:?}"
+            : "${CIRCLE_PROJECT_REPONAME:?this job needs the repository name}" "${CIRCLE_PROJECT_ID:?}"
             [[ $NEXTNODE_PROGRAM_REF =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]] || { echo "program_ref is not a git ref"; exit 1; }
             [ "$NEXTNODE_PROGRAM_REF" = main ] || [ "$CIRCLE_PROJECT_ID" = "$NEXTNODE_CANARY_PROJECT_ID" ] || { echo "program_ref other than main is for the canary"; exit 1; }
             mkdir -m 750 -p /home/circleci/platform
