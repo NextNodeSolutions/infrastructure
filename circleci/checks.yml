@@ -10,6 +10,8 @@
 #   hold         a person approves the production deployment in CircleCI.
 #   deploy-prod  on main, after the approval. Uploads a version that receives no
 #                traffic, checks its preview URL, promotes it only on success.
+#   probe        on the canary, through the probe pipeline parameter: every attack
+#                the project could run against the boundary below, each must fail.
 #
 # No CircleCI context is used: every job receives an OIDC token, and the only
 # values a job needs besides secrets are identifiers written below.
@@ -30,6 +32,12 @@
 # could be the project's. BASH_ENV carries only text written here.
 
 version: 2.1
+
+parameters:
+  probe:
+    type: boolean
+    default: false
+    description: Run the boundary probes in place of the pipeline. Set through the API, on the canary.
 
 executors:
   node:
@@ -229,6 +237,14 @@ commands:
             # calls git for version metadata. The platform user has no further use for git,
             # so its git finds no repository from here on. project-run removes the variable.
             echo 'export GIT_DIR=/nonexistent' >> "$BASH_ENV"
+  forget-job-token:
+    description: Remove the OIDC token from every later step, once the job has no further use for it.
+    steps:
+      - run:
+          name: Forget the job token
+          # Every later step sources this file first.
+          command: |
+            { echo 'unset CIRCLE_OIDC_TOKEN CIRCLE_OIDC_TOKEN_V2'; cat "$BASH_ENV"; } > "$BASH_ENV.next" && mv "$BASH_ENV.next" "$BASH_ENV"
   project-run:
     description: Run a project command as the project user, with the application's secrets and without the job's OIDC tokens.
     parameters:
@@ -315,8 +331,7 @@ jobs:
             # The application project carries the per-environment split. Its secrets go
             # to the project user, in a file only that user reads.
             echo -n "application: "; export_project "$(nn nextnode infisical_project)" "$NEXTNODE_ENVIRONMENT" | sudo -nu project sh -c 'umask 077; cat > /home/project/app.env'
-            # The job token has done its work. Every later step sources this file first.
-            { echo 'unset CIRCLE_OIDC_TOKEN CIRCLE_OIDC_TOKEN_V2'; cat "$BASH_ENV"; } > "$BASH_ENV.next" && mv "$BASH_ENV.next" "$BASH_ENV"
+      - forget-job-token
       - project-run:
           command: pnpm install --frozen-lockfile
       - save_cache:
@@ -378,8 +393,87 @@ jobs:
             set -a; . /home/circleci/platform/platform.env; set +a
             wrangler versions deploy "$version@100%" --config "$config" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" --yes
 
+  probe:
+    # The boundary's regression test. Every probe is an attack the project could run,
+    # through the same entry point as a project command, and passes only when the
+    # attack fails. No vault login: the files it attacks stand in for the real ones,
+    # written the way the vault step writes them.
+    executor: node
+    environment:
+      NEXTNODE_ENVIRONMENT: development
+    steps:
+      - checkout
+      - platform-tools
+      - read-toml
+      - run:
+          name: "Probe: a second Wrangler configuration, a build command and a route are refused"
+          command: |
+            entry=$(nn nextnode entry); config=$(nn nextnode wrangler_config)
+            case "$config" in *.json|*.jsonc) ;; *) echo "this probe edits a JSON configuration, the canary commits $config"; exit 1;; esac
+            work=$(mktemp -d) && cp -r ~/project/. "$work" && cd "$work"
+            refused() { if node /tmp/read-toml.cjs > /dev/null 2>&1; then echo "accepted: $1"; return 1; fi; echo "refused: $1"; }
+            # Adds keys to the committed configuration, through a parser.
+            with() { node -e 'const fs = require("node:fs"), jsonc = require(process.env.HOME + "/.platform/node_modules/jsonc-parser"); const file = process.argv[1]; const config = jsonc.parse(fs.readFileSync(file, "utf8"), [], { allowTrailingComma: true }); fs.writeFileSync(file, JSON.stringify({ ...config, ...JSON.parse(process.argv[2]) }))' -- "$entry/$config" "$1"; }
+            touch "$entry/wrangler.toml" && refused "a second Wrangler configuration" && rm "$entry/wrangler.toml"
+            with '{ "build": { "command": "true" } }' && refused "a build command" && cp ~/project/"$entry/$config" "$entry/$config"
+            with '{ "routes": ["probe.example/*"] }' && refused "a route"
+      - run:
+          name: "Probe: a value read from a platform file stays text"
+          command: |
+            node -e 'require("node:fs").writeFileSync("/home/circleci/platform/literal.json", JSON.stringify({ value: "$(touch /tmp/probe-evaluated) `touch /tmp/probe-evaluated`; touch /tmp/probe-evaluated" }))'
+            [ "$(nn literal value)" = '$(touch /tmp/probe-evaluated) `touch /tmp/probe-evaluated`; touch /tmp/probe-evaluated' ] && [ ! -e /tmp/probe-evaluated ]
+      - isolate-project
+      - run:
+          name: Stand in for the vault step
+          command: |
+            (umask 077; echo 'export PLATFORM_PROBE=platform' > /home/circleci/platform/platform.env)
+            echo 'export APP_PROBE=application' | sudo -nu project sh -c 'umask 077; cat > /home/project/app.env'
+            # Project shells have no BASH_ENV: the path reaches the probes through a platform file.
+            node -e 'require("node:fs").writeFileSync("/home/circleci/platform/probe.json", JSON.stringify({ bash_env: process.env.BASH_ENV }))'
+            stat -c '%U:%G %a %n' "$BASH_ENV" /home/circleci/platform /home/circleci/platform/platform.env
+            # What a same-user process would read: the token is there, the probes must not reach it.
+            grep -qsa CIRCLE_OIDC_TOKEN "/proc/$/environ" && echo "this platform step holds the token in /proc/$/environ"
+      - forget-job-token
+      - run:
+          name: "Probe: the job token is gone from the platform steps"
+          command: '[ -z "${CIRCLE_OIDC_TOKEN:-}${CIRCLE_OIDC_TOKEN_V2:-}" ]'
+      - project-run:
+          step: "Probe: the project receives its own secrets and not the platform's"
+          command: '[ "$APP_PROBE" = application ] && [ -z "${PLATFORM_PROBE:-}" ]'
+      - project-run:
+          step: "Probe: the project finds no job token in its environment"
+          command: '! env | grep -q CIRCLE_OIDC'
+      - project-run:
+          step: "Probe: the project finds no job token in any process it can inspect"
+          command: '! grep -qsa CIRCLE_OIDC_TOKEN /proc/[0-9]*/environ'
+      - project-run:
+          step: "Probe: the project cannot read the platform's secrets"
+          command: '! cat /home/circleci/platform/platform.env'
+      - project-run:
+          step: "Probe: the project cannot write in the platform's directory"
+          command: '! touch /home/circleci/platform/probe'
+      - project-run:
+          step: "Probe: the project cannot append to the file every platform step sources"
+          command: 'file=$(node -p "require(\"/home/circleci/platform/probe.json\").bash_env"); [ -n "$file" ] && ! sh -c "echo probe >> $file"'
+      - run:
+          name: "Probe: the sourced file holds only the pipeline's text"
+          command: '! grep -qx probe "$BASH_ENV"'
+      - project-run:
+          step: "Probe: the project cannot become another user"
+          command: '! sudo -n true && ! sudo -nu circleci true'
+      - project-run:
+          step: "Probe: the project configures git to run a command"
+          command: 'printf "[core]\n\tfsmonitor = /bin/sh -c \"touch /tmp/probe-fsmonitor-ran\"\n" >> .git/config && grep -q fsmonitor .git/config'
+      - run:
+          name: "Probe: the platform's git finds no repository, so the configured command never runs"
+          command: |
+            cd "$(nn nextnode entry)"
+            if git status > /dev/null 2>&1; then echo "the platform's git found a repository"; exit 1; fi
+            [ ! -e /tmp/probe-fsmonitor-ran ]
+
 workflows:
   pipeline:
+    unless: << pipeline.parameters.probe >>
     jobs:
       - checks
       - deploy:
@@ -398,3 +492,7 @@ workflows:
           environment: production
           requires: [hold]
           filters: *main
+  probes:
+    when: << pipeline.parameters.probe >>
+    jobs:
+      - probe
