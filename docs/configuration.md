@@ -24,7 +24,7 @@ The file lives at the repository root and holds names only, never a secret value
 | --- | --- | --- |
 | `project.name` | Names the project everywhere the platform keeps state for it, including the Pulumi project. A letter or digit, then letters, digits, dots, dashes or underscores, a hundred characters at most. | Refused. |
 | `project.infisical_project` | Identifier of the Infisical project that holds the application's secrets, one environment per deployment environment. | Refused. |
-| `deploy.entry` | Directory that holds the Wrangler configuration, relative to the root. | The root. |
+| `deploy.entry` | Directory that holds the Wrangler configuration, relative to the root and inside the repository. | The root. |
 | `deploy.health` | Route the pipeline requests after each upload. It must answer with a success status on a fresh deployment, even against an empty database. | The root route. |
 | `deploy.migrate` | Command that applies the project's migrations, run as the project user after the build with the application's secrets in its environment. The platform never guesses a migration tool. | No migration step. |
 | `environments.development.domain` | Hostname of the development environment, attached to its Worker as a custom domain. The zone must belong to the platform's Cloudflare account. | Refused when the section exists. When the whole `environments.development` section is absent, the project has no development environment: the development job halts and the pipeline waits for the approval. |

@@ -8,7 +8,7 @@
 // which the development job turns into a halt: a missing development environment is the
 // project's choice, not an error.
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { parseArgs } from "node:util";
 import jsonc from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
@@ -79,6 +79,8 @@ const name = text(project, "name", undefined);
 if (!PROJECT_NAME.test(name)) refuse("nextnode.toml: project.name must start with a letter or digit, then letters, digits, dots, dashes or underscores, 100 characters at most: it names the Pulumi project");
 const deploy = table(toml, "deploy");
 const entry = text(deploy, "entry", ".");
+// The entry is a directory of the checkout: the platform reads and copies nothing outside it.
+if (isAbsolute(entry) || entry.split(/[\\/]/).includes("..")) refuse("nextnode.toml: deploy.entry must be a directory of the repository, relative to its root");
 const spec: Spec = {
   project: name,
   environment,
