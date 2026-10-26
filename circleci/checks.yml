@@ -245,9 +245,10 @@ commands:
     steps:
       - run:
           name: Forget the job token
-          # Every later step sources this file first.
+          # Every later step sources this file first. The variables go by prefix: CircleCI
+          # adds a generation of the token without notice, and a name list missed one.
           command: |
-            { echo 'unset CIRCLE_OIDC_TOKEN CIRCLE_OIDC_TOKEN_V2'; cat "$BASH_ENV"; } > "$BASH_ENV.next" && mv "$BASH_ENV.next" "$BASH_ENV"
+            { echo 'unset ${!CIRCLE_OIDC_TOKEN@}'; cat "$BASH_ENV"; } > "$BASH_ENV.next" && mv "$BASH_ENV.next" "$BASH_ENV"
   project-run:
     description: Run a project command as the project user, with the application's secrets and without the job's OIDC tokens.
     parameters:
@@ -259,10 +260,11 @@ commands:
     steps:
       - run:
           name: <<# parameters.step >><< parameters.step >><</ parameters.step >><<^ parameters.step >><< parameters.command >><</ parameters.step >>
+          # unset by prefix: every generation of the job token, named or not yet.
           # exec: no process the project user could read ever held the tokens.
           # GIT_DIR: the platform's git is inert, the project's keeps working in the checkout.
           # umask: the platform user, same group, can read and write what the project builds.
-          command: exec env -u CIRCLE_OIDC_TOKEN -u CIRCLE_OIDC_TOKEN_V2 -u GIT_DIR HOME=/home/project npm_config_store_dir=/home/circleci/.pnpm-store sudo -nE -u project bash -eo pipefail -c 'umask 002; set -a; [ -f ~/app.env ] && . ~/app.env; set +a; << parameters.command >>'
+          command: unset ${!CIRCLE_OIDC_TOKEN@}; exec env -u GIT_DIR HOME=/home/project npm_config_store_dir=/home/circleci/.pnpm-store sudo -nE -u project bash -eo pipefail -c 'umask 002; set -a; [ -f ~/app.env ] && . ~/app.env; set +a; << parameters.command >>'
 
 jobs:
   checks:
@@ -448,21 +450,21 @@ jobs:
             node -e 'require("node:fs").writeFileSync("/home/circleci/platform/probe.json", JSON.stringify({ bash_env: process.env.BASH_ENV }))'
             stat -c '%U:%G %a %n' "$BASH_ENV" /home/circleci/platform /home/circleci/platform/platform.env
             # What a same-user process would read: the token is there, and the probes must not reach it.
-            grep -Eqsaz "^CIRCLE_OIDC_TOKEN(_V2)?=" "/proc/$$/environ" || { echo "this platform step does not hold the token in /proc/$$/environ: the process probe would prove nothing"; exit 1; }
+            grep -Eqsaz "^CIRCLE_OIDC_TOKEN[A-Z0-9_]*=" "/proc/$$/environ" || { echo "this platform step does not hold the token in /proc/$$/environ: the process probe would prove nothing"; exit 1; }
       - forget-job-token
       - run:
           name: "Probe: the job token is gone from the platform steps"
-          command: '[ -z "${CIRCLE_OIDC_TOKEN:-}${CIRCLE_OIDC_TOKEN_V2:-}" ]'
+          command: '[ -z "${!CIRCLE_OIDC_TOKEN@}" ]'
       - project-run:
           step: "Probe: the project receives its own secrets and not the platform's"
           command: '[ "$APP_PROBE" = application ] && [ -z "${PLATFORM_PROBE:-}" ]'
       - project-run:
           step: "Probe: the project finds no job token in its environment, by name or by shape"
           # Anchored on a name: sudo records the command, pattern included, in SUDO_COMMAND.
-          command: 'found=$(env | grep -E "^CIRCLE_OIDC_TOKEN(_V2)?=|eyJ[A-Za-z0-9_-]+\.eyJ" | cut -d= -f1 || true); [ -z "$found" ] || { echo "a token-shaped value in: $found"; exit 1; }'
+          command: 'found=$(env | grep -E "^CIRCLE_OIDC_TOKEN[A-Z0-9_]*=|eyJ[A-Za-z0-9_-]+\.eyJ" | cut -d= -f1 || true); [ -z "$found" ] || { echo "a token-shaped value in: $found"; exit 1; }'
       - project-run:
           step: "Probe: the project finds no job token in any process it can inspect"
-          command: 'found=$(grep -Elsaz "^CIRCLE_OIDC_TOKEN(_V2)?=|eyJ[A-Za-z0-9_-]+\.eyJ" /proc/[0-9]*/environ || true); [ -z "$found" ] || { echo "a token-shaped value in: $found"; exit 1; }'
+          command: 'found=$(grep -Elsaz "^CIRCLE_OIDC_TOKEN[A-Z0-9_]*=|eyJ[A-Za-z0-9_-]+\.eyJ" /proc/[0-9]*/environ || true); [ -z "$found" ] || { echo "a token-shaped value in: $found"; exit 1; }'
       - project-run:
           step: "Probe: no file the project can read holds a token"
           command: 'file=$(node -p "require(\"/home/circleci/platform/probe.json\").bash_env"); [ -n "$file" ]; found=$(grep -Elrs "eyJ[A-Za-z0-9_-]+\.eyJ" /home/circleci/platform "$file" || true); [ -z "$found" ] || { echo "a token-shaped value in: $found"; exit 1; }'
