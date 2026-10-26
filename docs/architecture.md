@@ -83,7 +83,7 @@ Rules that the diagram encodes:
 
 ## The deployment job
 
-One job, parameterized by the environment. It runs on an image built from this repository and pinned by digest, which carries Node, pnpm, Wrangler, Pulumi with its providers, the Infisical CLI and the Pulumi program.
+One job, parameterized by the environment. It runs on CircleCI's Node image at a pinned tag, and installs the platform tools at exact versions into the platform user's home: Wrangler, the Infisical CLI, the configuration parsers, later Pulumi with its providers. CircleCI caches that installation under a key made of the versions, and the project's pnpm store under a key made of its lockfile, so a job spends its time on the project, not on downloads. Changing a tool version changes the key and rebuilds the cache once.
 
 ```mermaid
 sequenceDiagram
@@ -174,7 +174,8 @@ Until the script exists, the same steps are done by hand against the APIs. The i
 | CircleCI with the configuration in this repository | The only CI of the shortlist whose GitHub App integration runs a configuration from another repository against the project's checkout, so projects hold no CI file. | GitHub Actions reusable workflows, which still need a caller file in each repository and whose required-workflow rulesets cover pull requests only. |
 | Pulumi from the first deployment | DNS ships with the first Worker, databases follow, and the same program will drive AWS. | Wrangler alone, which is Cloudflare-only and imperative for resources. |
 | Wrangler kept for the bundle and the assets | Pulumi can create a Worker, but uploading static assets through it means redoing Wrangler's upload protocol by hand. | Pulumi-only Worker deployment. |
-| No CLI or npm package in projects | A project should not depend on a tool to be deployable. The image and the configuration carry the tooling. | A published pipeline CLI, as the previous platform had. |
+| No CLI or npm package in projects | A project should not depend on a tool to be deployable. The configuration carries the tooling, at pinned versions. | A published pipeline CLI, as the previous platform had. |
+| Pinned tools in a cache rather than a platform image | The same determinism, with no registry, no push credential and no digest to bump in a second pull request. | An image built from this repository and pinned by digest. Revisit if the toolchain grows past what an install step handles in seconds. |
 | One pipeline on `main`, no `develop`, no tags | Trunk-based flow with one manual gate. Fewer refs, fewer rules to protect. | Production on tags, which would have let the vault distinguish the two environments by ref, at the cost of a second flow. |
 | Dynamic configuration for the development step | The project decides whether it has a development environment, and CircleCI offers no other way to read a file before choosing jobs. | Forcing a development environment on every project. |
 | One vault identity | Scoping by environment is paid on the vendor side, and the account model already makes projects share a fate. | One identity per environment or per repository. |
