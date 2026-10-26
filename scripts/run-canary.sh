@@ -51,7 +51,9 @@ for number in $(printf '%s' "$jobs" | json 'j.items.filter(x=>x.job_number).map(
   job=$(api "https://circleci.com/api/v1.1/project/$PROJECT/$number")
   echo "== job $(printf '%s' "$job" | json 'j.workflows?.job_name') (#$number) $(printf '%s' "$job" | json 'j.status')"
   printf '%s' "$job" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);const re=new RegExp(process.argv[1]);for(const st of j.steps||[])for(const a of st.actions||[]){if(a.status!=="success"||re.test(st.name))console.log((a.status==="success"?"ok   ":"FAIL ")+st.name+"\t"+(a.output_url||""))}})' "$SHOW" | while IFS=$'\t' read -r line url; do
-    echo "  $line"; [ -n "$url" ] && curl -s "$url" | json 'j.map(m=>m.message).join("")' | redact | tail -n 15 | sed 's/^/      | /'
+    echo "  $line"
+    if [ -n "$url" ]; then curl -s "$url" | json 'j.map(m=>m.message).join("")' | redact | tail -n 15 | sed 's/^/      | /'; fi
   done
 done
-[ "$status" = success ]
+# Without APPROVE, a green pipeline rests on hold.
+[ "$status" = success ] || { [ "$status" = on_hold ] && [ -z "${APPROVE:-}" ]; }

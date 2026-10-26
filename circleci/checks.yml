@@ -128,8 +128,8 @@ commands:
           command: |
             lock=/home/circleci/platform/infrastructure/platform/package-lock.json
             version() { node -p "require(process.argv[1]).packages['node_modules/' + process.argv[2]].version" -- "$lock" "$1" | grep -xE '[0-9]+\.[0-9]+\.[0-9]+'; }
-            printf 'PULUMI=%s\nCLOUDFLARE=%s\n' "$(version @pulumi/pulumi)" "$(version @pulumi/cloudflare)" > /tmp/tools.txt
-            cat /tmp/tools.txt
+            pulumi=$(version @pulumi/pulumi) && cloudflare=$(version @pulumi/cloudflare) || { echo "the lockfile names no release version for the Pulumi SDKs"; exit 1; }
+            printf 'PULUMI=%s\nCLOUDFLARE=%s\n' "$pulumi" "$cloudflare" | tee /tmp/tools.txt
       - restore_cache:
           keys:
             - tools-{{ checksum "/tmp/tools.txt" }}
@@ -143,6 +143,7 @@ commands:
             . "$BASH_ENV"
             [ -x ~/.platform/pulumi/pulumi ] && exit 0
             . /tmp/tools.txt
+            : "${PULUMI:?}" "${CLOUDFLARE:?}"
             mkdir -p ~/.platform
             # The CLI archive carries a host for every language; only Node's is extracted.
             curl -fsSL --retry 3 "https://github.com/pulumi/pulumi/releases/download/v$PULUMI/pulumi-v$PULUMI-linux-x64.tar.gz" | tar -xz -C ~/.platform pulumi/pulumi pulumi/pulumi-language-nodejs pulumi/pulumi-resource-pulumi-nodejs
@@ -183,7 +184,8 @@ commands:
       - project-run:
           command: pnpm install --frozen-lockfile
       - project-run:
-          # A store restored from an older lockfile keeps every package it ever held.
+          # A store restored from an older lockfile keeps every package it ever held. The
+          # prune is paid on every run, a scan of the store, for a store that stays small.
           command: pnpm store prune
       - save_cache:
           key: pnpm-<< parameters.kind >>-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
@@ -224,8 +226,10 @@ commands:
           name: Forget the job tokens
           # Every later step sources this file first. CircleCI puts several tokens in the
           # environment under names it chooses, so they go by their common prefix.
+          # Rewritten in place, from a variable: no second file in the shared directory.
           command: |
-            { echo 'unset ${!CIRCLE_OIDC_TOKEN@}'; cat "$BASH_ENV"; } > "$BASH_ENV.next" && mv "$BASH_ENV.next" "$BASH_ENV"
+            kept=$(cat "$BASH_ENV")
+            printf 'unset ${!CIRCLE_OIDC_TOKEN@}\n%s\n' "$kept" > "$BASH_ENV"
   project-run:
     description: Run a project command as the project user, in an environment built from a list, with the application's secrets.
     parameters:
@@ -318,6 +322,11 @@ jobs:
           command: migrate=$(node -p "require(\"/home/circleci/platform/nextnode.json\").migrate"); if [ -n "$migrate" ]; then echo "+ $migrate"; eval "$migrate"; else echo "No migrate command in nextnode.toml, nothing to run."; fi
       - end-project
       - run:
+          name: Seal the checkout
+          # Wrangler reads and uploads what the project left in the checkout, as the
+          # platform user: a link that resolves outside it is refused before Wrangler runs.
+          command: node /home/circleci/platform/infrastructure/platform/sealed.ts --root ~/project
+      - run:
           name: Deploy
           # Development replaces what serves, and so does a production Worker's first
           # deployment, when nothing serves yet. Every other production deployment is a
@@ -405,6 +414,8 @@ jobs:
             fresh; with "{ \"env\": { \"$NEXTNODE_ENVIRONMENT\": { \"route\": \"probe.example/*\" } } }"; refused "a route of the environment" "declares routes"
             fresh; with "{ \"name\": null, \"env\": { \"$NEXTNODE_ENVIRONMENT\": { \"name\": null } } }"; refused "a Worker without a name" "declares no name"
             fresh; printf '[deploy]\nentry = "../%s"\n[environments.production]\ndomain = "probe.example"\n' "$entry" > nextnode.toml; refused "an entry outside the repository" "must be a directory of the repository"
+            fresh; with '{ "assets": { "directory": "/home/circleci/platform" } }'; refused "an assets directory outside the repository" "names a path outside the repository"
+            fresh; with '{ "main": "../../../platform/platform.env" }'; refused "an entry point outside the repository" "names a path outside the repository"
       - run:
           name: "Probe: a value read from a platform file stays text"
           command: |
@@ -454,7 +465,7 @@ jobs:
           step: "Probe: the project cannot have the agent mint a job token"
           # The agent serves `circleci run oidc get` to the job's steps. Called from the
           # project's environment, every agent binary must fail or print no token.
-          command: 'agents=$(node -p "require(\"/home/circleci/platform/probe.json\").agents"); [ -n "$agents" ]; for agent in $agents; do if out=$("$agent" run oidc get 2>&1) && printf "%s" "$out" | grep -Eq "eyJ[A-Za-z0-9_-]+\.eyJ"; then echo "$agent minted a token for the project"; exit 1; fi; echo "refused: $agent"; done'
+          command: 'agents=$(node -p "require(\"/home/circleci/platform/probe.json\").agents"); [ -n "$agents" ]; for agent in $agents; do out=$("$agent" run oidc get 2>&1 || true); if printf "%s" "$out" | grep -Eq "eyJ[A-Za-z0-9_-]+\.eyJ"; then echo "$agent minted a token for the project"; exit 1; fi; echo "refused: $agent"; done'
       - project-run:
           step: "Probe: the project cannot read the platform's secrets"
           command: '! cat /home/circleci/platform/platform.env'
@@ -477,6 +488,16 @@ jobs:
       - run:
           name: "Probe: the platform ended it, with every other process of the project"
           command: '! pgrep -u project'
+      - project-run:
+          step: "Probe: the project links a file of the platform, and one of its own process, into the checkout"
+          command: 'entry=$(node -p "require(\"/home/circleci/platform/nextnode.json\").entry"); ln -s /home/circleci/platform/platform.env "$entry/probe-secret" && ln -s /proc/self/environ "$entry/probe-environ" && ln -s ../package.json "$entry/probe-inside"'
+      - run:
+          name: "Probe: the seal refuses the links that leave the checkout, and names them"
+          command: |
+            if out=$(node /home/circleci/platform/infrastructure/platform/sealed.ts --root ~/project 2>&1); then echo "accepted a checkout with links outside it"; exit 1; fi
+            printf '%s\n' "$out" | grep -q probe-secret && printf '%s\n' "$out" | grep -q probe-environ && ! printf '%s\n' "$out" | grep -q probe-inside
+            entry=$(nn nextnode entry); rm ~/project/"$entry"/probe-secret ~/project/"$entry"/probe-environ
+            node /home/circleci/platform/infrastructure/platform/sealed.ts --root ~/project
       - project-run:
           step: "Probe: the project replaces the Wrangler configuration after the platform read it"
           command: 'entry=$(node -p "require(\"/home/circleci/platform/nextnode.json\").entry"); config=$(node -p "require(\"/home/circleci/platform/nextnode.json\").wrangler_config"); echo "{ \"build\": { \"command\": \"true\" } }" > "$entry/$config.project" && mv "$entry/$config" "$entry/$config.committed" && ln -s "$config.project" "$entry/$config"'

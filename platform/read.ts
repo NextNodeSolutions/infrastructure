@@ -9,14 +9,15 @@
 // names the key or the rule and exits 1. Exit 3 means the environment is not declared,
 // which the development job turns into a halt: a missing development environment is the
 // project's choice, not an error.
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import jsonc from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
 import { isRecord, type Spec } from "./src/spec.ts";
 
 const NOT_DECLARED = 3;
+const ROOT = realpathSync(".");
 // The repository name becomes the Pulumi project name, which Pulumi restricts to this shape.
 const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const WRANGLER_CONFIG = /^wrangler\.(jsonc?|toml)$/;
@@ -52,12 +53,27 @@ function workerName(wrangler: unknown, section: Record<string, unknown>, file: s
   return `${top}-${environment}`;
 }
 
+// Every string of the configuration that Wrangler would take as a path, such as the
+// entry point or the assets directory, must stay inside the repository: Wrangler reads
+// and uploads it as the platform user. A string that is no path resolves inside anyway.
+function insideRepository(value: unknown, entry: string, file: string): void {
+  if (typeof value === "string") {
+    const target = resolve(entry, value);
+    if (target !== ROOT && !target.startsWith(ROOT + sep)) refuse(`${file} names a path outside the repository: ${value}`);
+  } else if (Array.isArray(value)) {
+    for (const item of value) insideRepository(item, entry, file);
+  } else if (isRecord(value)) {
+    for (const item of Object.values(value)) insideRepository(item, entry, file);
+  }
+}
+
 function readWrangler(entry: string): Pick<Spec, "wrangler_config" | "worker_name"> {
   const configs = readdirSync(entry).filter((name) => WRANGLER_CONFIG.test(name));
   const file = configs[0];
   if (file === undefined || configs.length !== 1) refuse(`expected one Wrangler configuration in ${entry}, found ${configs.length}`);
   const source = readFileSync(join(entry, file), "utf8");
   const wrangler: unknown = file.endsWith(".toml") ? parseToml(source) : jsonc.parse(source, [], { allowTrailingComma: true });
+  insideRepository(wrangler, entry, file);
   // Wrangler deploys the environment's section of its configuration, so the section must exist.
   const section = table(wrangler, "env")[environment];
   if (!isRecord(section)) refuse(`${file} declares no env.${environment}: the platform deploys that section`);
@@ -80,13 +96,16 @@ if (!PROJECT_NAME.test(args.repository)) refuse(`the repository name ${JSON.stri
 const deploy = table(toml, "deploy");
 const entry = text(deploy, "entry", ".");
 // The entry is a directory of the checkout: the platform reads and copies nothing outside it.
-if (isAbsolute(entry) || entry.split(/[\\/]/).includes("..")) refuse("nextnode.toml: deploy.entry must be a directory of the repository, relative to its root");
+if (isAbsolute(entry) || entry.split(/[\\/]/).includes("..") || !(realpathSync(entry) === ROOT || realpathSync(entry).startsWith(ROOT + sep))) {
+  refuse("nextnode.toml: deploy.entry must be a directory of the repository, relative to its root");
+}
+if (deploy.migrate !== undefined && typeof deploy.migrate !== "string") refuse("nextnode.toml: deploy.migrate must be a string, the command to run");
 const spec: Spec = {
   project: args.repository,
   environment,
   entry,
   health: text(deploy, "health", "/"),
-  migrate: typeof deploy.migrate === "string" ? deploy.migrate : "",
+  migrate: deploy.migrate ?? "",
   domain: text(table(table(toml, "environments"), environment), "domain", undefined),
   ...readWrangler(entry),
 };

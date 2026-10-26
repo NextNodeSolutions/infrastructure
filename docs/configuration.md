@@ -38,6 +38,7 @@ Wrangler runs as the platform user with the Cloudflare credential, on the config
 - **A section per deployment environment**, under `env`, and a name for the Worker. Wrangler deploys that section, and the Worker is named after it, or after the top-level name suffixed with the environment when the section gives no name. The platform attaches the domain to that Worker, so it needs the name to be the one Wrangler uses, and refuses a configuration that names nothing.
 - **No build command.** The configuration is read with the platform credential, and a build command in it would run project code with that credential. The build is the project's `build` script, run as the project user.
 - **No route and no custom domain.** Domains come from `nextnode.toml` and are attached by the platform package after each upload. A route declared to Wrangler would be fought over by every deployment.
+- **Every path stays inside the repository.** The entry point, the assets directory and any other string Wrangler would read as a path resolve from the entry to somewhere under the repository's root, and no link of the checkout, after the build, resolves outside it. Wrangler reads and uploads as the platform user, so a path or a link that reaches out of the checkout would upload a file of the platform.
 
 A production Worker keeps preview URLs enabled. The pipeline checks a production version on its preview URL before promoting it, and fails the deployment when the upload yields none.
 
@@ -66,6 +67,7 @@ A refusal of `nextnode.toml` or of the Wrangler configuration happens in the rea
 | Mistake | Where it shows |
 | --- | --- |
 | A missing or malformed key of `nextnode.toml`, a Wrangler configuration that breaks a rule above, a repository name Pulumi refuses | The read step of the deployment job, which prints the key or the rule. The checks job does not read these files, so the error appears on `main` only. |
+| A link of the checkout that resolves outside it, left by the build or committed | The seal step of the deployment job, after the build and before the upload, which names each link. |
 | No Infisical project named after the repository, or two | The secrets step of the deployment job, before any project code runs. |
 | An unpinned or malformed `packageManager` | The install step of the checks job, on the first push. |
 | A lockfile out of date | The project's install step, on the first push. On `main`, the deployment job fails at the same step, before the build. |
