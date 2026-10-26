@@ -1,0 +1,22 @@
+{
+  "name": "@nextnode-solutions/platform",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Pulumi program of the NextNode platform and the driver the deployment job runs, through the Automation API.",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "check": "tsc --noEmit",
+    "deploy": "node deploy.ts"
+  },
+  "dependencies": {
+    "@pulumi/cloudflare": "6.23.1",
+    "@pulumi/pulumi": "3.272.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.9.1",
+    "typescript": "6.0.3"
+  }
+}
