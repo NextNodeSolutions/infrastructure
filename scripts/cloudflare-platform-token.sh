@@ -24,7 +24,8 @@ API=https://api.cloudflare.com/client/v4
 VAULT=https://app.infisical.com/api/v3/secrets/raw
 
 json() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s||"{}");const v=new Function("j","return ("+process.argv[1]+")")(j);console.log(v==null?"":typeof v==="string"?v:JSON.stringify(v))})' "$1"; }
-cf() { curl -sS -H "Authorization: Bearer $BOOT" -H 'content-type: application/json' "$@"; }
+# Tokens reach curl through a file descriptor, never through its argument list.
+cf() { curl -sS -K <(printf 'header = "Authorization: Bearer %s"\n' "$BOOT") -H 'content-type: application/json' "$@"; }
 # Cloudflare answers every request with a JSON envelope; its success field is the verdict.
 ok() { [ "$(printf '%s' "$1" | json 'j.success')" = "true" ]; }
 errors() { printf '%s' "$1" | json 'j.errors?.map(e=>e.message).join("; ")'; }
@@ -32,7 +33,7 @@ fail() { echo "error: $*" >&2; exit 1; }
 
 command -v infisical >/dev/null || fail "infisical CLI not installed"
 SESSION=$(infisical user get token --plain 2>/dev/null) || fail "no Infisical session, run: infisical login"
-vault() { curl -sS -H "Authorization: Bearer $SESSION" -H 'content-type: application/json' "$@"; }
+vault() { curl -sS -K <(printf 'header = "Authorization: Bearer %s"\n' "$SESSION") -H 'content-type: application/json' "$@"; }
 
 printf 'Bootstrap Cloudflare token (not echoed): '; read -rs BOOT; echo
 [ -n "$BOOT" ] || fail "empty token"
@@ -70,7 +71,7 @@ VALUE=$(printf '%s' "$CREATED" | json 'j.result.value'); NEW_ID=$(printf '%s' "$
 echo "created account token '$NAME' ($NEW_ID)"
 
 # The new token must work before anything else is touched.
-VERIFIED=$(curl -sS -H "Authorization: Bearer $VALUE" "$API/accounts/$ACCOUNT/tokens/verify")
+VERIFIED=$(curl -sS -K <(printf 'header = "Authorization: Bearer %s"\n' "$VALUE") "$API/accounts/$ACCOUNT/tokens/verify")
 [ "$(printf '%s' "$VERIFIED" | json 'j.result?.status')" = "active" ] || fail "the new token does not verify: $(errors "$VERIFIED"). It is left in place for inspection."
 
 # Vault write through the API, from the variable: the value is never an argument.
