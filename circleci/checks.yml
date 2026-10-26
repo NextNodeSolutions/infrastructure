@@ -23,6 +23,11 @@
 # user's files or processes. Root access ends before the first project command;
 # sudo then serves only to become the project user.
 #
+# The Cloudflare resources of an environment are converged by the platform package of
+# this repository, a Pulumi program driven through the Automation API. The job clones
+# this repository at `program_ref`, `main` unless a canary run names a branch, so a
+# project always runs the program that `main` holds, as it runs this file from `main`.
+#
 # Nothing the project controls is ever evaluated by a shell. Values read from
 # nextnode.toml and produced by a deployment travel between steps as JSON files
 # read with `nn`, in a directory of the platform user's home that the project
@@ -30,6 +35,12 @@
 # could be the project's. BASH_ENV carries only text written here.
 
 version: 2.1
+
+parameters:
+  program_ref:
+    type: string
+    default: main
+    description: Git ref of this repository to take the platform package from. Only an API trigger can set it, which is how a canary run validates a pull request's program.
 
 executors:
   node:
@@ -43,9 +54,12 @@ commands:
     steps:
       - run:
           name: Name the platform tools
-          # The Pulumi CLI is released with its SDK under one version, and the Cloudflare
-          # provider plugin with its SDK: both are installed at the SDK's version.
-          command: echo "@infisical/cli@0.44.9 wrangler@4.152.0 smol-toml@1.9.1 jsonc-parser@3.3.1 @pulumi/pulumi@3.272.0 @pulumi/cloudflare@6.23.1" > /tmp/tools.txt
+          # First line, npm packages. Second line, the Pulumi CLI and the Cloudflare provider
+          # plugin, released with their SDKs under one version: they are pinned at the versions
+          # the platform package pins, and the driver refuses to run on a drift.
+          command: |
+            echo "@infisical/cli@0.44.9 wrangler@4.152.0 smol-toml@1.9.1 jsonc-parser@3.3.1" > /tmp/tools.txt
+            echo "pulumi@3.272.0 cloudflare@6.23.1" >> /tmp/tools.txt
       - restore_cache:
           keys:
             - tools-{{ checksum "/tmp/tools.txt" }}
@@ -58,14 +72,14 @@ commands:
             ENV
             . "$BASH_ENV"
             [ -x ~/.platform/pulumi/pulumi ] && [ -x ~/.platform/node_modules/.bin/wrangler ] && [ -x ~/.platform/node_modules/.bin/infisical ] && exit 0
-            version() { grep -oE "$1@[0-9.]+" /tmp/tools.txt | cut -d@ -f3; }
+            version() { sed -n 2p /tmp/tools.txt | grep -oE "$1@[0-9.]+" | cut -d@ -f2; }
             mkdir -p ~/.platform
             # The CLI archive carries a host for every language; only Node's stays.
-            curl -fsSL --retry 3 "https://github.com/pulumi/pulumi/releases/download/v$(version @pulumi/pulumi)/pulumi-v$(version @pulumi/pulumi)-linux-x64.tar.gz" | tar -xz -C ~/.platform
+            curl -fsSL --retry 3 "https://github.com/pulumi/pulumi/releases/download/v$(version pulumi)/pulumi-v$(version pulumi)-linux-x64.tar.gz" | tar -xz -C ~/.platform
             find ~/.platform/pulumi -type f ! -name pulumi ! -name pulumi-language-nodejs ! -name pulumi-resource-pulumi-nodejs -delete
             # shellcheck disable=SC2046
-            npm install --prefix ~/.platform --no-fund --no-audit $(cat /tmp/tools.txt)
-            pulumi plugin install resource cloudflare "$(version @pulumi/cloudflare)"
+            npm install --prefix ~/.platform --no-fund --no-audit $(sed -n 1p /tmp/tools.txt)
+            pulumi plugin install resource cloudflare "$(version cloudflare)"
       - save_cache:
           key: tools-{{ checksum "/tmp/tools.txt" }}
           paths: [~/.platform]
@@ -105,6 +119,7 @@ commands:
             }
             const values = {
               project: toml.project.name,
+              environment: env,
               infisical_project: toml.project?.infisical_project,
               entry: toml.deploy?.entry ?? ".",
               health: toml.deploy?.health ?? "/",
@@ -158,58 +173,36 @@ commands:
             # The store layout follows the pnpm version, so the store cache is keyed by it too.
             echo "$pin" > /tmp/pnpm.txt
   resources:
-    description: Converge the environment's Cloudflare resources with Pulumi, from the platform user's own directory, on the state kept in the platform's R2 bucket.
+    description: Converge the environment's Cloudflare resources with the platform package, cloned from this repository at program_ref and run as the platform user.
     steps:
+      - run:
+          name: Clone the platform package
+          # Shallow, over HTTPS, no credential: this repository is public and holds no
+          # secret by construction. The platform's git points at no repository by now, so
+          # the variable is lifted for this one command. The clone is recreated every run.
+          command: |
+            rm -rf /home/circleci/platform/infrastructure
+            env -u GIT_DIR git clone -q --depth 1 --branch "<< pipeline.parameters.program_ref >>" https://github.com/NextNodeSolutions/infrastructure.git /home/circleci/platform/infrastructure
+            echo "platform package at $(env -u GIT_DIR git -C /home/circleci/platform/infrastructure rev-parse --short HEAD) (<< pipeline.parameters.program_ref >>)"
+      - restore_cache:
+          keys:
+            - platform-{{ checksum "/home/circleci/platform/infrastructure/platform/package-lock.json" }}
       - run:
           name: Resources
           # Runs once the Worker of this deployment is uploaded and before the smoke
           # request: a custom domain attaches to a Worker that exists, and a domain that
-          # serves is never touched before its replacement is there.
+          # serves is never touched before its replacement is there. The driver prints the
+          # stack outputs as JSON, kept for the Worker bindings.
           command: |
+            cd /home/circleci/platform/infrastructure/platform
+            [ -d node_modules ] || npm ci --omit=dev --no-fund --no-audit
             set -a; . /home/circleci/platform/platform.env; set +a
-            auth() { printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN"; }
-            # Recreated empty: nothing that was there before is loaded.
-            rm -rf /home/circleci/platform/pulumi && mkdir /home/circleci/platform/pulumi && cd /home/circleci/platform/pulumi
-            ln -sfn ~/.platform/node_modules node_modules
-            # JSON is YAML: the project name goes through a serializer, never into a template.
-            node -e 'require("node:fs").writeFileSync("Pulumi.yaml", JSON.stringify({ name: require("/home/circleci/platform/nextnode.json").project, runtime: { name: "nodejs", options: { typescript: false } } }))'
-            echo '{ "main": "index.js" }' > package.json
-            cat > index.js \<<'JS'
-            // The Cloudflare resources of one environment of one project. Inputs: the JSON that
-            // read-toml wrote from nextnode.toml and the platform account. Resources keyed by
-            // nextnode.toml entries are added here.
-            const cloudflare = require("@pulumi/cloudflare");
-            const spec = require("/home/circleci/platform/nextnode.json");
-            const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-
-            // The zone is the longest registered name of the account that the domain belongs to.
-            const zone = cloudflare.getZonesOutput({ account: { id: accountId } }).apply(({ results }) => {
-              const holding = results.filter((z) => spec.domain === z.name || spec.domain.endsWith(`.${z.name}`));
-              if (holding.length === 0) throw new Error(`${spec.domain}: no zone of the account holds this domain`);
-              return holding.sort((a, b) => b.name.length - a.name.length)[0];
-            });
-
-            // The environment's domain, attached to the Worker Wrangler has just uploaded.
-            new cloudflare.WorkersCustomDomain("domain", {
-              accountId,
-              zoneId: zone.id,
-              hostname: spec.domain,
-              service: spec.worker_name,
-            });
-
-            exports.domain = spec.domain;
-            exports.zone = zone.name;
-            JS
-            # The state bucket is reached through R2's S3 API with the platform token itself:
-            # R2 accepts a token's id as access key and the token's SHA-256 as secret key.
-            AWS_ACCESS_KEY_ID=$(curl -fsS -K <(auth) https://api.cloudflare.com/client/v4/user/tokens/verify | node -e 'let s = ""; process.stdin.on("data", (d) => s += d).on("end", () => process.stdout.write(JSON.parse(s).result.id))')
-            AWS_SECRET_ACCESS_KEY=$(printf '%s' "$CLOUDFLARE_API_TOKEN" | sha256sum | cut -c1-64)
-            export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION=auto
-            pulumi login "s3://$NEXTNODE_STATE_BUCKET?endpoint=$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com&region=auto&s3ForcePathStyle=true" > /dev/null
-            pulumi stack select --create "$NEXTNODE_ENVIRONMENT"
-            # Refreshed first: what disappeared outside Pulumi, such as a domain that went with
-            # a deleted Worker, leaves the state instead of failing its own deletion.
-            pulumi up --refresh --yes --skip-preview --non-interactive --suppress-progress
+            rm -rf /home/circleci/platform/pulumi && mkdir /home/circleci/platform/pulumi
+            node deploy.ts --spec /home/circleci/platform/nextnode.json --work /home/circleci/platform/pulumi > /home/circleci/platform/resources.json
+            echo "outputs: $(cat /home/circleci/platform/resources.json)"
+      - save_cache:
+          key: platform-{{ checksum "/home/circleci/platform/infrastructure/platform/package-lock.json" }}
+          paths: [/home/circleci/platform/infrastructure/platform/node_modules]
   isolate-project:
     description: Create the project user, hand it the checkout, and end root access. Sudo then only becomes that user.
     steps:
