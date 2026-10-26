@@ -442,10 +442,11 @@ jobs:
           command: '[ "$APP_PROBE" = application ] && [ -z "${PLATFORM_PROBE:-}" ]'
       - project-run:
           step: "Probe: the project finds no job token in its environment"
-          command: '! env | grep -q CIRCLE_OIDC'
+          # Anchored on a name: sudo records the command, pattern included, in SUDO_COMMAND.
+          command: '! env | grep -Eq "^CIRCLE_OIDC_TOKEN(_V2)?="'
       - project-run:
           step: "Probe: the project finds no job token in any process it can inspect"
-          command: '! grep -qsa CIRCLE_OIDC_TOKEN /proc/[0-9]*/environ'
+          command: '! grep -Eqsaz "^CIRCLE_OIDC_TOKEN(_V2)?=" /proc/[0-9]*/environ'
       - project-run:
           step: "Probe: the project cannot read the platform's secrets"
           command: '! cat /home/circleci/platform/platform.env'
