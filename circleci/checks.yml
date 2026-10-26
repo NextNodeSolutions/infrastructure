@@ -194,7 +194,8 @@ jobs:
           command: pnpm build
       - project-run:
           step: Migrations
-          command: migrate=$(nn nextnode migrate); if [ -n "$migrate" ]; then echo "+ $migrate"; eval "$migrate"; else echo "No migrate command in nextnode.toml, nothing to run."; fi
+          # sudo drops BASH_ENV, so a project shell has no `nn`: it reads the JSON itself.
+          command: migrate=$(node -p "require(\"/tmp/nextnode.json\").migrate"); if [ -n "$migrate" ]; then echo "+ $migrate"; eval "$migrate"; else echo "No migrate command in nextnode.toml, nothing to run."; fi
       - run:
           name: Deploy
           # Development replaces what serves, and so does a production Worker's first
