@@ -1,0 +1,76 @@
+# NextNode central CI, run by CircleCI.
+#
+# Config source of every NextNode project pipeline. A project repository holds no
+# CI file: its pipeline definition points here and checks out its own repository.
+#
+#   checks  lint, formatting, types, tests of the project. No context, no secret.
+#   vault   proves the pipeline reaches Infisical through the short-lived OIDC
+#           identity of the `deploy-dev` context. Prints secret names, never values.
+
+version: 2.1
+
+executors:
+  node:
+    docker:
+      - image: cimg/node:24.9
+    resource_class: small
+
+jobs:
+  checks:
+    executor: node
+    steps:
+      - checkout
+      - run:
+          name: Install the pnpm pinned in package.json
+          command: |
+            pin=$(node -p "require('./package.json').packageManager ?? ''")
+            [[ $pin == pnpm@* ]] || { echo "package.json must pin pnpm in packageManager, got '$pin'"; exit 1; }
+            sudo npm install --global --no-fund --no-audit "$pin"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm format:check
+      - run: pnpm type-check
+      - run:
+          name: Tests
+          command: |
+            if node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)"; then
+              pnpm test
+            else
+              echo "No test script declared in package.json: nothing to run."
+            fi
+
+  vault:
+    executor: node
+    steps:
+      - run:
+          name: Reach Infisical with the OIDC identity and list secret names
+          # CircleCI reserves `<<` in config v2.1, hence the escaped heredoc marker.
+          command: |
+            : "${CIRCLE_OIDC_TOKEN_V2:?this job needs a context}"
+            cat > /tmp/vault.mjs \<<'JS'
+            const { INFISICAL_HOST: host, INFISICAL_IDENTITY_ID: identityId, INFISICAL_PLATFORM_PROJECT_ID: projectId, CIRCLE_OIDC_TOKEN_V2: jwt } = process.env
+            const api = async (path, init) => {
+              const response = await fetch(host + path, init)
+              const body = await response.json()
+              if (!response.ok) throw new Error(`${path}: ${response.status} ${body.message ?? ''}`)
+              return body
+            }
+            const { accessToken, expiresIn } = await api('/api/v1/auth/oidc-auth/login', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ identityId, jwt }),
+            })
+            console.log(`login ok, token valid ${expiresIn}s`)
+            const { secrets } = await api(`/api/v3/secrets/raw?workspaceId=${projectId}&environment=main&secretPath=/`, {
+              headers: { authorization: `Bearer ${accessToken}` },
+            })
+            console.log(`${secrets.length} secret(s) visible: ${secrets.map(secret => secret.secretKey).join(', ')}`)
+            JS
+            node /tmp/vault.mjs
+
+workflows:
+  ci:
+    jobs:
+      - checks
+      - vault:
+          context: deploy-dev
