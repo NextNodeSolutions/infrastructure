@@ -5,9 +5,11 @@
 # The project supplies nextnode.toml, a pinned packageManager and its scripts.
 #
 #   checks       lint, formatting, types, tests of the project. No context, no secret.
-#   deploy-dev   on main, when the project declares a development environment.
+#   deploy-dev   on main. Halts at once when the project declares no development
+#                environment, so the workflow continues to the approval.
 #   hold         a person approves the production deployment in CircleCI.
-#   deploy-prod  on main, after the approval.
+#   deploy-prod  on main, after the approval. Uploads a version that receives no
+#                traffic, checks its preview URL, promotes it only on success.
 #
 # No CircleCI context is used: every job receives an OIDC token, and the only
 # values a job needs besides secrets are identifiers written below.
@@ -15,7 +17,12 @@
 # How secrets flow: a deployment job trades its OIDC token for a vault token
 # that lives only in the step that fetched the secrets. The environment's
 # secrets are exported to the following steps; the vault token never is, and the
-# OIDC variables are removed from the environment of every project command.
+# OIDC variables are removed from every later step before anything else runs.
+#
+# Project code runs through `project-run`, in a process that replaced the step
+# shell and never held the OIDC variables. With the variables gone from the
+# later steps and from every process the project code can inspect, a dependency
+# with a lifecycle script finds no token to trade.
 
 version: 2.1
 
@@ -35,8 +42,16 @@ commands:
             pin=$(node -p "require('./package.json').packageManager ?? ''")
             [[ $pin == pnpm@* ]] || { echo "package.json must pin pnpm in packageManager, got '$pin'"; exit 1; }
             sudo npm install --global --no-fund --no-audit "$pin"
+  drop-sudo:
+    description: End the passwordless sudo of the image before any project code runs.
+    steps:
+      - run:
+          # The agent that holds the job token runs as root. Without sudo, project code
+          # cannot read its environment. The platform tools are installed before this.
+          name: Drop sudo
+          command: sudo chmod u-s /usr/bin/sudo && { sudo -n true 2>/dev/null && exit 1 || echo "sudo is gone for the rest of the job"; }
   project-run:
-    description: Run a project command without the job's OIDC tokens in its environment.
+    description: Run a project command in a process that never held the job's OIDC tokens.
     parameters:
       step:
         type: string
@@ -45,7 +60,7 @@ commands:
     steps:
       - run:
           name: << parameters.step >>
-          command: env -u CIRCLE_OIDC_TOKEN -u CIRCLE_OIDC_TOKEN_V2 bash -eo pipefail -c '<< parameters.command >>'
+          command: exec env -u CIRCLE_OIDC_TOKEN -u CIRCLE_OIDC_TOKEN_V2 bash -eo pipefail -c '<< parameters.command >>'
 
 jobs:
   checks:
@@ -53,14 +68,23 @@ jobs:
     steps:
       - checkout
       - install-pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm format:check
-      - run: pnpm type-check
-      - run:
-          name: Tests
+      - drop-sudo
+      - project-run:
+          step: pnpm install --frozen-lockfile
+          command: pnpm install --frozen-lockfile
+      - project-run:
+          step: pnpm lint
+          command: pnpm lint
+      - project-run:
+          step: pnpm format:check
+          command: pnpm format:check
+      - project-run:
+          step: pnpm type-check
+          command: pnpm type-check
+      - project-run:
+          step: Tests
           command: |
-            if node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)"; then
+            if node -e "process.exit(require(\"./package.json\").scripts?.test ? 0 : 1)"; then
               pnpm test
             else
               echo "No test script declared in package.json: nothing to run."
@@ -84,6 +108,7 @@ jobs:
       - run:
           name: Install the platform tools
           command: sudo npm install --global --no-fund --no-audit @infisical/cli@0.44.9 wrangler@4.152.0 smol-toml@1.9.1
+      - drop-sudo
       - run:
           name: Read nextnode.toml
           # CircleCI reserves `<<` in config v2.1, hence the escaped heredoc marker.
@@ -95,7 +120,9 @@ jobs:
             const env = process.env.NEXTNODE_ENVIRONMENT;
             if (!toml.environments?.[env]) {
               console.error(`nextnode.toml declares no environment "${env}"`);
-              process.exit(1);
+              // A missing development environment is a choice, not an error: the job
+              // halts and the workflow goes on to the approval.
+              process.exit(env === "development" ? 3 : 1);
             }
             const values = {
               NEXTNODE_PROJECT: toml.project.name,
@@ -104,13 +131,19 @@ jobs:
               NEXTNODE_HEALTH: toml.deploy.health ?? "/",
               NEXTNODE_MIGRATE: toml.deploy.migrate ?? "",
             };
+            // Single quotes: the values come from the project and must stay literal
+            // when the next step sources the file.
+            const literal = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
             for (const [key, value] of Object.entries(values)) {
               if (value === undefined) { console.error(`nextnode.toml: missing ${key}`); process.exit(1); }
-              fs.appendFileSync(process.env.BASH_ENV, `export ${key}=${JSON.stringify(value)}\n`);
+              fs.appendFileSync(process.env.BASH_ENV, `export ${key}=${literal(value)}\n`);
               console.log(`${key}=${value}`);
             }
             JS
-            NODE_PATH=$(npm root -g) node /tmp/read-toml.cjs
+            NODE_PATH=$(npm root -g) node /tmp/read-toml.cjs && exit 0
+            status=$?
+            [ "$status" = 3 ] && circleci-agent step halt
+            exit "$status"
       - run:
           name: Fetch the secrets of << parameters.environment >>
           command: |
@@ -125,6 +158,9 @@ jobs:
             # deployment environment. The application project carries the per-environment split.
             export_project "$INFISICAL_PLATFORM_PROJECT_ID" main
             export_project "$NEXTNODE_INFISICAL_PROJECT" "$NEXTNODE_ENVIRONMENT"
+            # The job token has done its work. Every later step sources this file first,
+            # so the variables are gone before any line a project command may have added.
+            { echo 'unset CIRCLE_OIDC_TOKEN CIRCLE_OIDC_TOKEN_V2'; cat "$BASH_ENV"; } > "$BASH_ENV.next" && mv "$BASH_ENV.next" "$BASH_ENV"
       - project-run:
           step: pnpm install --frozen-lockfile
           command: pnpm install --frozen-lockfile
@@ -134,17 +170,41 @@ jobs:
       - project-run:
           step: Migrations
           command: if [ -n "$NEXTNODE_MIGRATE" ]; then echo "+ $NEXTNODE_MIGRATE"; eval "$NEXTNODE_MIGRATE"; else echo "No migrate command in nextnode.toml, nothing to run."; fi
-      - project-run:
-          step: Deploy the Worker
-          command: |
-            cd "$NEXTNODE_ENTRY"
-            wrangler deploy --env "$NEXTNODE_ENVIRONMENT" 2>&1 | tee /tmp/wrangler.log
-            url=$(grep -oE "https://[a-z0-9.-]+\.workers\.dev" /tmp/wrangler.log | head -1)
-            [ -n "$url" ] || { echo "wrangler printed no workers.dev URL"; exit 1; }
-            echo "export NEXTNODE_URL=$url" >> "$BASH_ENV"
-      - run:
-          name: Smoke
-          command: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null -w "%{http_code} ${NEXTNODE_URL}${NEXTNODE_HEALTH}\n" "${NEXTNODE_URL}${NEXTNODE_HEALTH}"
+      - when:
+          condition:
+            equal: [development, << parameters.environment >>]
+          steps:
+            - project-run:
+                step: Deploy the Worker
+                command: |
+                  cd "$NEXTNODE_ENTRY"
+                  wrangler deploy --env "$NEXTNODE_ENVIRONMENT" 2>&1 | tee /tmp/wrangler.log
+                  url=$(grep -oE "https://[a-z0-9.-]+\.workers\.dev" /tmp/wrangler.log | head -1)
+                  [ -n "$url" ] || { echo "wrangler printed no workers.dev URL: the development Worker needs workers_dev"; exit 1; }
+                  echo "export NEXTNODE_URL=$url" >> "$BASH_ENV"
+            - run:
+                name: Smoke
+                command: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null -w "%{http_code} ${NEXTNODE_URL}${NEXTNODE_HEALTH}\n" "${NEXTNODE_URL}${NEXTNODE_HEALTH}"
+      - when:
+          condition:
+            equal: [production, << parameters.environment >>]
+          steps:
+            - project-run:
+                step: Upload a version that receives no traffic
+                command: |
+                  cd "$NEXTNODE_ENTRY"
+                  wrangler versions upload --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" 2>&1 | tee /tmp/wrangler.log
+                  version=$(grep -oE "Worker Version ID: [0-9a-f-]+" /tmp/wrangler.log | head -1 | cut -d" " -f4)
+                  preview=$(grep -oE "https://[a-z0-9.-]+\.workers\.dev" /tmp/wrangler.log | head -1)
+                  [ -n "$version" ] || { echo "wrangler printed no version id"; exit 1; }
+                  [ -n "$preview" ] || { echo "wrangler printed no preview URL: the production Worker needs preview_urls"; exit 1; }
+                  echo "export NEXTNODE_VERSION=$version NEXTNODE_URL=$preview" >> "$BASH_ENV"
+            - run:
+                name: Smoke the preview, the previous version keeps serving meanwhile
+                command: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null -w "%{http_code} ${NEXTNODE_URL}${NEXTNODE_HEALTH}\n" "${NEXTNODE_URL}${NEXTNODE_HEALTH}"
+            - project-run:
+                step: Promote the version to all traffic
+                command: cd "$NEXTNODE_ENTRY" && wrangler versions deploy "$NEXTNODE_VERSION@100%" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" --yes
 
 workflows:
   pipeline:

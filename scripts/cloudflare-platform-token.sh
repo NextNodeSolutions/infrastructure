@@ -2,8 +2,8 @@
 # Create the single Cloudflare credential of the platform and store it in the vault.
 #
 # One account-owned API token, allowed on every selectable account and zone permission
-# group (billing excluded), stored as CLOUDFLARE_API_TOKEN in the platform project for
-# the development and production environments. Pulumi and Wrangler read it from there.
+# group (billing excluded), stored as CLOUDFLARE_API_TOKEN in the platform project's
+# single environment. Pulumi and Wrangler read it from there.
 # Run once. Run again to rotate: a new token is created and stored, the old one is
 # deleted at the end.
 #
@@ -18,6 +18,9 @@ API=https://api.cloudflare.com/client/v4
 
 json() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s||"{}");const v=new Function("j","return ("+process.argv[1]+")")(j);console.log(v==null?"":typeof v==="string"?v:JSON.stringify(v))})' "$1"; }
 cf() { curl -sS -H "Authorization: Bearer $BOOT" -H 'content-type: application/json' "$@"; }
+# Cloudflare answers every request with a JSON envelope; its success field is the verdict.
+ok() { [ "$(printf '%s' "$1" | json 'j.success')" = "true" ]; }
+errors() { printf '%s' "$1" | json 'j.errors?.map(e=>e.message).join("; ")'; }
 fail() { echo "error: $*" >&2; exit 1; }
 
 command -v infisical >/dev/null || fail "infisical CLI not installed"
@@ -32,7 +35,7 @@ echo "account: $ACCOUNT"
 
 # Every selectable permission group, split by the resource scope it applies to.
 GROUPS_JSON=$(cf "$API/accounts/$ACCOUNT/tokens/permission_groups?per_page=500")
-[ "$(printf '%s' "$GROUPS_JSON" | json 'j.success')" = "true" ] || fail "permission groups: $(printf '%s' "$GROUPS_JSON" | json 'j.errors?.map(e=>e.message).join("; ")')"
+ok "$GROUPS_JSON" || fail "permission groups: $(errors "$GROUPS_JSON")"
 POLICIES=$(printf '%s' "$GROUPS_JSON" | node -e '
 let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
   const groups=JSON.parse(s).result.filter(g=>g.is_selectable!==false && !/billing|subscription/i.test(g.name));
@@ -47,21 +50,26 @@ let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
   console.log(JSON.stringify(policies));
 })' "$ACCOUNT")
 
-EXISTING=$(cf "$API/accounts/$ACCOUNT/tokens?per_page=100" | json "(j.result||[]).filter(t=>t.name===\"$NAME\").map(t=>t.id).join(\" \")")
+LIST=$(cf "$API/accounts/$ACCOUNT/tokens?per_page=100")
+ok "$LIST" || fail "list tokens: $(errors "$LIST")"
+EXISTING=$(printf '%s' "$LIST" | json "j.result.filter(t=>t.name===\"$NAME\").map(t=>t.id).join(\" \")")
 
 CREATED=$(cf -X POST "$API/accounts/$ACCOUNT/tokens" -d "{\"name\":\"$NAME\",\"policies\":$POLICIES}")
-[ "$(printf '%s' "$CREATED" | json 'j.success')" = "true" ] || fail "create token: $(printf '%s' "$CREATED" | json 'j.errors?.map(e=>e.message).join("; ")')"
+ok "$CREATED" || fail "create token: $(errors "$CREATED")"
 VALUE=$(printf '%s' "$CREATED" | json 'j.result.value'); NEW_ID=$(printf '%s' "$CREATED" | json 'j.result.id')
 echo "created account token '$NAME' ($NEW_ID)"
 
-for ENV in development production; do
-  infisical secrets set CLOUDFLARE_API_TOKEN="$VALUE" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT" --env="$ENV" --projectId="$PLATFORM_PROJECT" --silent >/dev/null
-  echo "vault: $ENV has $(infisical secrets get CLOUDFLARE_API_TOKEN --env="$ENV" --projectId="$PLATFORM_PROJECT" --plain --silent | wc -c | tr -d ' ') characters in CLOUDFLARE_API_TOKEN"
-done
+infisical secrets set CLOUDFLARE_API_TOKEN="$VALUE" CLOUDFLARE_ACCOUNT_ID="$ACCOUNT" --env=main --projectId="$PLATFORM_PROJECT" --silent >/dev/null
+STORED=$(infisical secrets get CLOUDFLARE_API_TOKEN --env=main --projectId="$PLATFORM_PROJECT" --plain --silent | wc -c | tr -d ' ')
+[ "$STORED" -gt 1 ] || fail "the vault did not store the new token; the previous token is left in place"
+echo "vault: main holds CLOUDFLARE_API_TOKEN ($STORED characters)"
 unset VALUE
 
+# Only now is the previous token useless. A failed delete leaves it active, so it is an error.
 for OLD in $EXISTING; do
-  cf -X DELETE "$API/accounts/$ACCOUNT/tokens/$OLD" >/dev/null && echo "deleted previous token $OLD"
+  DELETED=$(cf -X DELETE "$API/accounts/$ACCOUNT/tokens/$OLD")
+  ok "$DELETED" || fail "delete previous token $OLD: $(errors "$DELETED"). Delete it in the Cloudflare dashboard."
+  echo "deleted previous token $OLD"
 done
 
 # Best effort: remove the bootstrap token when it is a user token.

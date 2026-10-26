@@ -112,10 +112,10 @@ sequenceDiagram
 Three rules keep the secrets where they belong.
 
 - **The vault token never leaves the step that obtained it.** Login and export happen in one shell. Nothing is written to the file CircleCI sources before each step.
-- **Project code never sees the job token.** Install, build and the migration command run with the OIDC variables removed from their environment, after the vault step has ended. A dependency with a lifecycle script cannot trade the job token for a vault token.
+- **Project code never sees the job token.** Every project command runs in a process that replaced the step shell without the OIDC variables, the variables are removed from every later step before anything else runs once the vault step has ended, and the image's sudo is dropped before the first project command. A dependency with a lifecycle script finds the token neither in its environment nor in a process it is allowed to read.
 - **An application's production secrets exist only in `deploy-prod`.** That job exports the application's production environment and no other. It runs on `main` only, after the approval when the project has a development environment, and straight after `checks` when it has none. Infisical cannot tell the two deployment jobs apart, because both tokens carry the same subject. The central configuration is what tells them apart, and only a pull request here can change it.
 
-Development deploys directly to all traffic. Production uploads a version that receives no traffic, runs the smoke request against it, and promotes it only on success.
+Development deploys directly to all traffic. Production uploads a version that receives no traffic, runs the smoke request against its preview URL, and promotes it only on success. The preview URL is the gate, so a production Worker keeps preview URLs enabled.
 
 ### What a failure leaves behind
 
@@ -190,6 +190,7 @@ These are the facts that forced the decisions above. Each names where to look wh
 | A pipeline whose configuration comes from another repository is not displayed in the CircleCI configuration editor, and `CIRCLE_REPOSITORY_URL` is empty. | Read the file from this repository. Take the repository from the checkout, not from that variable. | CircleCI documentation, GitHub App pipelines. |
 | CircleCI reserves `<<` in configuration files. | A shell heredoc inside a `run` step must escape its marker as `\<<`. | CircleCI documentation, configuration reference. |
 | On the `cimg` images, a global npm install needs `sudo`, and `CI=true` makes `pnpm install` frozen by default. | The install step says so. Error messages at that step point here. | The image documentation. |
+| On the `cimg` images sudo is passwordless, the CircleCI agent that holds the job token runs as root, and a process may read the environment of any process of its own user. | Project commands replace the step shell with `exec`, the OIDC variables are unset at the head of `BASH_ENV` after the vault step, and sudo is dropped once the tools are installed. | The image documentation, and a probe step on the canary that lists which processes expose the token. |
 | Infisical reads bound claims through dotted paths and ignores array values. | Only `sub` and `aud` can be bound for CircleCI. | Infisical source, OIDC auth service and the dot-access helper. |
 | On the Infisical free plan, custom roles are refused with a plan error, additional privileges are refused for recent projects as a retired feature, folder access controls are paid, and identities are billed per unit. | A free identity sees every environment of each project it belongs to. | Infisical pricing page and access-control documentation. |
 | Infisical ignores a request that only turns delete protection off. | To delete a protected identity, send the name together with the flag, then delete. | Infisical source, identity service. |
