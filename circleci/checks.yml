@@ -35,13 +35,13 @@ commands:
   project-run:
     description: Run a project command without the job's OIDC tokens in its environment.
     parameters:
-      name:
+      step:
         type: string
       command:
         type: string
     steps:
       - run:
-          name: << parameters.name >>
+          name: << parameters.step >>
           command: env -u CIRCLE_OIDC_TOKEN -u CIRCLE_OIDC_TOKEN_V2 bash -eo pipefail -c '<< parameters.command >>'
 
 jobs:
@@ -115,16 +115,16 @@ jobs:
               echo "project $project: $(infisical export --token "$token" --projectId "$project" --env "$NEXTNODE_ENVIRONMENT" --format json --silent | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const k=JSON.parse(s).map(x=>x.key);console.log(k.length+" secret(s): "+k.join(", "))})')"
             done
       - project-run:
-          name: pnpm install --frozen-lockfile
+          step: pnpm install --frozen-lockfile
           command: pnpm install --frozen-lockfile
       - project-run:
-          name: pnpm build
+          step: pnpm build
           command: pnpm build
       - project-run:
-          name: Migrations
+          step: Migrations
           command: if [ -n "$NEXTNODE_MIGRATE" ]; then echo "+ $NEXTNODE_MIGRATE"; eval "$NEXTNODE_MIGRATE"; else echo "No migrate command in nextnode.toml, nothing to run."; fi
       - project-run:
-          name: Deploy the Worker
+          step: Deploy the Worker
           command: |
             cd "$NEXTNODE_ENTRY"
             wrangler deploy --env "$NEXTNODE_ENVIRONMENT" 2>&1 | tee /tmp/wrangler.log
