@@ -130,6 +130,7 @@ jobs:
               NEXTNODE_ENTRY: toml.deploy.entry ?? ".",
               NEXTNODE_HEALTH: toml.deploy.health ?? "/",
               NEXTNODE_MIGRATE: toml.deploy.migrate ?? "",
+              NEXTNODE_DOMAIN: toml.environments[env].domain,
             };
             // Single quotes: the values come from the project and must stay literal
             // when the next step sources the file.
@@ -179,9 +180,9 @@ jobs:
                 command: |
                   cd "$NEXTNODE_ENTRY"
                   wrangler deploy --env "$NEXTNODE_ENVIRONMENT" 2>&1 | tee /tmp/wrangler.log
+                  # The health check targets the workers.dev URL when there is one, else the declared domain.
                   url=$(grep -oE "https://[a-z0-9.-]+\.workers\.dev" /tmp/wrangler.log | head -1)
-                  [ -n "$url" ] || { echo "wrangler printed no workers.dev URL: the development Worker needs workers_dev"; exit 1; }
-                  echo "export NEXTNODE_URL=$url" >> "$BASH_ENV"
+                  echo "export NEXTNODE_URL=${url:-https://$NEXTNODE_DOMAIN}" >> "$BASH_ENV"
             - run:
                 name: Smoke
                 command: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null -w "%{http_code} ${NEXTNODE_URL}${NEXTNODE_HEALTH}\n" "${NEXTNODE_URL}${NEXTNODE_HEALTH}"
@@ -199,7 +200,8 @@ jobs:
                     # yet, so there is nothing to protect: deploy directly, once.
                     echo "First deployment of this Worker, deployed directly."
                     wrangler deploy --env "$NEXTNODE_ENVIRONMENT" 2>&1 | tee /tmp/wrangler.log
-                    echo "export NEXTNODE_VERSION= NEXTNODE_URL=$(grep -oE "https://[a-z0-9.-]+\.workers\.dev" /tmp/wrangler.log | head -1)" >> "$BASH_ENV"
+                    url=$(grep -oE "https://[a-z0-9.-]+\.workers\.dev" /tmp/wrangler.log | head -1)
+                    echo "export NEXTNODE_VERSION= NEXTNODE_URL=${url:-https://$NEXTNODE_DOMAIN}" >> "$BASH_ENV"
                     exit 0
                   fi
                   version=$(grep -oE "Worker Version ID: [0-9a-f-]+" /tmp/wrangler.log | head -1 | cut -d" " -f4)
@@ -209,9 +211,7 @@ jobs:
                   echo "export NEXTNODE_VERSION=$version NEXTNODE_URL=$preview" >> "$BASH_ENV"
             - run:
                 name: Smoke the preview, the previous version keeps serving meanwhile
-                command: |
-                  [ -n "$NEXTNODE_URL" ] || { echo "No URL to check on a first deployment without workers.dev."; exit 0; }
-                  curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null -w "%{http_code} ${NEXTNODE_URL}${NEXTNODE_HEALTH}\n" "${NEXTNODE_URL}${NEXTNODE_HEALTH}"
+                command: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null -w "%{http_code} ${NEXTNODE_URL}${NEXTNODE_HEALTH}\n" "${NEXTNODE_URL}${NEXTNODE_HEALTH}"
             - project-run:
                 step: Promote the version to all traffic
                 command: |
