@@ -42,10 +42,10 @@ Each boundary carries a contract.
 
 | Boundary | Contract |
 | --- | --- |
-| Project repository to CircleCI | A push on any branch starts a pipeline. The project is cloned at the pushed ref. The project supplies `nextnode.toml`, a pinned `packageManager`, and the scripts `lint`, `format:check`, `type-check` and `build`, plus `test` when it has tests. |
+| Project repository to CircleCI | A push on any branch starts a pipeline. The project is cloned at the pushed ref. The project supplies what [configuration.md](configuration.md) lists: `nextnode.toml`, a Wrangler configuration, a pinned `packageManager` and a few scripts. |
 | This repository to CircleCI | The pipeline definition of every project reads its configuration file from `main` of this repository. CircleCI's GitHub App integration allows the configuration source and the checkout source to be different repositories. A merge here is a release to every project. |
 | CircleCI to Infisical | Each job receives an OIDC token whose subject names the CircleCI organization, the project, the user who caused the run, the repository and the git ref. Infisical accepts it for one machine identity, bound to the organization and to the `main` ref of the organization's repositories, and returns a vault token that expires within minutes. |
-| Job to Pulumi | Pulumi owns every Cloudflare resource it can express. The program reads `nextnode.toml`, keeps its state in an R2 bucket of the platform account, and exposes the identifiers the Worker needs as stack outputs. |
+| Job to the platform package | Pulumi owns every Cloudflare resource it can express. The package's program receives what the job read from `nextnode.toml`, keeps its state in an R2 bucket of the platform account, one stack per project and environment, and returns the identifiers the Worker needs as stack outputs. |
 | Job to Wrangler | Wrangler does only what Pulumi cannot do cleanly, which is bundling the Worker and uploading code and static assets. It reads the binding identifiers Pulumi produced. It is the Cloudflare-specific port of the deployment. Another target, such as AWS, gets its own port behind the same job. |
 | Job to the project | The project's own commands run for install, build and migrations, as a second user of the job. They receive the public variables and the application's secrets of the environment being deployed, and nothing else: not the platform's credentials, not anything that would let them talk to the vault. |
 
@@ -61,13 +61,10 @@ sequenceDiagram
     G->>C: push event through the GitHub App
     C->>I: read the pipeline configuration
     C->>P: clone the project at the pushed ref
-    C->>C: setup reads nextnode.toml and continues with HAS_DEV
     C->>C: checks
-    opt ref is main and HAS_DEV
-        C->>C: deploy-dev
-        Note over C,P: hold waits for a person to approve in CircleCI
-    end
     opt ref is main
+        C->>C: deploy-dev, which halts at once when the project declares no development environment
+        Note over C,P: hold waits for a person to approve in CircleCI
         C->>C: deploy-prod
     end
 ```
@@ -75,11 +72,11 @@ sequenceDiagram
 Rules that the diagram encodes:
 
 - **A branch gets checks and nothing else.** No job on a branch uses a vault identity, so a pull request from any author can run without exposing anything. Pull requests merge into `main` by squash, under the organization rulesets.
-- **`main` is the only deployment branch.** There is no `develop` branch and no release tag. A merge deploys the development environment when the project declares one, then waits for approval, then deploys production. A project without a development environment goes to production on merge, with no approval step. That is the explicit choice for simple projects.
-- **The project decides whether it has a development environment.** The `setup` job reads `nextnode.toml` and relaunches the rest of the pipeline with the `HAS_DEV` parameter, using CircleCI's dynamic configuration. A development environment with a database has its own cost and lifecycle, so it is not forced on every project.
+- **`main` is the only deployment branch.** There is no `develop` branch and no release tag. A merge deploys the development environment when the project declares one, then waits for approval, then deploys production.
+- **The project decides whether it has a development environment.** A development environment with a database has its own cost and lifecycle, so it is not forced on every project. The workflow is static, so the development job starts for every project and halts as soon as it has read `nextnode.toml` when no development environment is declared; such a project still goes through the approval. The intended end state, listed under open points, reads the file before the jobs are chosen and sends a project without a development environment to production straight after the checks.
 - **The approval is the only manual step.** Anyone who can approve in the CircleCI organization can release. Restricting approval to a group is a paid CircleCI feature, so the organization membership is the control.
 
-`checks` installs the pnpm version pinned in the project's `package.json`, installs with a frozen lockfile, then runs the project's lint, format check and type check, and its tests when a `test` script exists. It enforces nothing of its own beyond the pin and the lockfile. The contract with a project is the set of scripts, not their content.
+`checks` installs the pnpm version pinned in the project's `package.json`, installs with a frozen lockfile, then runs the project's lint, format check and type check, and its tests when a `test` script exists. It enforces nothing of its own beyond the pin and the lockfile. The contract with a project is the set of scripts, not their content. Even on a branch, project scripts run as a second user of the job, the same way as in the deployment job.
 
 ## The deployment job
 
@@ -113,7 +110,7 @@ Pulumi runs after the upload and before the smoke request. A custom domain attac
 
 The Pulumi program is the platform package of this repository, a Node package that holds the program as a function and a driver built on Pulumi's Automation API. The driver does in code what a shell would do in commands: it names the project, points at the state bucket, selects or creates the stack, refreshes, updates, and prints the stack outputs as JSON for the Worker bindings. The job clones this repository at the `program_ref` pipeline parameter, `main` by default, installs the package's dependencies from a cache keyed by its lockfile, and runs the driver as the platform user from a directory of its own, never from the checkout. A project cannot set a pipeline parameter from a push, so a project always runs the program `main` holds, as it runs the configuration from `main`. The canary script sets the parameter to the pull request's branch, so a pull request is validated with its own program. This repository is public and holds no secret by construction, which is why the clone needs no credential; were it private, a read-only deploy key in the platform vault would take that place.
 
-Three rules keep the secrets where they belong.
+The rules that keep the secrets where they belong.
 
 - **The vault token never leaves the step that obtained it.** Login and export happen in one shell. Nothing is written to the file CircleCI sources before each step.
 - **Project code never sees the job token, nor the platform's credentials.** Project commands run as a second user, in a process that replaced the step shell without the OIDC variables. The variables are removed from every later step once the vault step has ended, the platform's secrets live in a file only the platform user reads, and root access ends before the first project command. A dependency with a lifecycle script, even one that leaves a process behind, finds neither token in its environment, in a file it may read, or in a process it may inspect.
@@ -122,7 +119,7 @@ Three rules keep the secrets where they belong.
 - **Nothing the project controls is evaluated by a shell.** The values of `nextnode.toml` and the results of a deployment travel between steps as JSON files owned by the platform user, never as lines of a sourced shell file.
 - **The platform writes only where the project cannot.** Once the project user exists, every file the platform writes and later reads or loads, from the deployment record to the Pulumi program and its packages, lives in a directory of the platform user's home that the project user cannot write, and a program directory is recreated empty before use. A file created in a shared place after project code ran could be the project's.
 - **The platform package runs with the platform's credentials, from the platform's clone.** It is the only code besides this file that runs with the Cloudflare token, and it comes from this repository, at a ref a project cannot choose.
-- **An application's production secrets exist only in `deploy-prod`.** That job exports the application's production environment and no other. It runs on `main` only, after the approval when the project has a development environment, and straight after `checks` when it has none. Infisical cannot tell the two deployment jobs apart, because both tokens carry the same subject. The central configuration is what tells them apart, and only a pull request here can change it.
+- **An application's production secrets exist only in `deploy-prod`.** That job exports the application's production environment and no other. It runs on `main` only, after the approval. Infisical cannot tell the two deployment jobs apart, because both tokens carry the same subject. The central configuration is what tells them apart, and only a pull request here can change it.
 
 Development deploys directly to all traffic. Production uploads a version that receives no traffic, runs the smoke request against its preview URL, and promotes it only on success. The preview URL is the gate, so a production Worker keeps preview URLs enabled.
 
@@ -134,7 +131,7 @@ Development deploys directly to all traffic. Production uploads a version that r
 | Vault login fails | Nothing deployed. Either the identity binding rejects the ref, or the identity is not a member of the project. The step prints the Infisical error. |
 | Pulumi fails part way | The stack state records what was created. The next run converges, because the program is declarative. The lock is released when the process ends. |
 | A resource was deleted outside Pulumi, by hand or with the Worker it was attached to | The refresh that precedes every update drops it from the state, and the program recreates what it still declares. |
-| The job ends between the Worker's upload and the Pulumi step | The Worker serves on its workers.dev URL only, a production version serves nothing. The next run attaches the domain. |
+| The job ends between the Worker's upload and the Pulumi step, or the platform package cannot be cloned or run | The Worker serves on its workers.dev URL only, a production version serves nothing. The next run attaches the domain. |
 | Migration fails | Resources are up to date, the previous Worker still serves. The project's migration tool owns the recovery. |
 | Development smoke fails | The development Worker has already been replaced, production is untouched. |
 | Production smoke fails | The new version is uploaded but never promoted. The previous version keeps serving. |
@@ -144,7 +141,7 @@ Development deploys directly to all traffic. Production uploads a version that r
 
 Infisical holds every value. Nothing secret is written in this repository, in a project repository, in CircleCI or in a pipeline log.
 
-- **One platform project** holds what every deployment needs, in a single Infisical environment named `main`. That is the Cloudflare API token and account, and the passphrase that encrypts Pulumi's secret outputs. The state bucket needs no credential of its own: R2's S3 API accepts the API token as a key pair, so the token that creates the resources also keeps their state. One account serves every deployment environment, so a split by environment would hold the same values twice while every job could read both anyway.
+- **One platform project** holds what every deployment needs, in a single Infisical environment named `main`. That is the Cloudflare API token and account, created and stored by the token script of this repository from a short-lived bootstrap token, and the passphrase that encrypts Pulumi's secret outputs. The state bucket needs no credential of its own: R2's S3 API accepts the API token as a key pair, so the token that creates the resources also keeps their state. One account serves every deployment environment, so a split by environment would hold the same values twice while every job could read both anyway.
 - **One project per application**, named after the repository, with one Infisical environment per deployment environment, holds the application's own secrets. Locally, `infisical run --env development` replaces a dotenv file.
 - **One machine identity**, Viewer of the platform project and of every application project. It logs in through OIDC Auth, bound to the CircleCI organization as audience and to a subject pattern that names the organization, the GitHub organization and the `main` ref. A pipeline on another ref gets nothing.
 
@@ -164,7 +161,7 @@ Durable credentials and their rotation:
 
 ## The project's contract
 
-`nextnode.toml` is the only input a project supplies besides its scripts. Its keys are fixed by the Pulumi program, which is their reference. In outline, it names the project and its Infisical project, says what kind of deployment it is and where the Worker lives, names the health route and the optional migration command, lists the resources to create by kind, and declares each environment with its domain. The presence of a development environment is what turns `HAS_DEV` on. The file never holds a secret value.
+`nextnode.toml`, the committed Wrangler configuration and a few package scripts are all a project supplies. [configuration.md](configuration.md) lists the keys, the rules the read step enforces on the Wrangler configuration, and where each mistake is reported. The file never holds a secret value, and the presence of a development environment in it is what gives the project a development deployment.
 
 ## Registering a repository
 
@@ -188,7 +185,7 @@ Until the script exists, the same steps are done by hand against the APIs. The i
 | The package is cloned from this repository at a pipeline parameter | The job checks out the project, not this repository, and no claim of the job token names the configuration's ref. A parameter that only an API trigger can set gives the canary the pull request's program and gives every project `main`. | A published package, which would need a release before every canary run. |
 | Pinned tools in a cache rather than a platform image | The same determinism, with no registry, no push credential and no digest to bump in a second pull request. | An image built from this repository and pinned by digest. Revisit if the toolchain grows past what an install step handles in seconds. |
 | One pipeline on `main`, no `develop`, no tags | Trunk-based flow with one manual gate. Fewer refs, fewer rules to protect. | Production on tags, which would have let the vault distinguish the two environments by ref, at the cost of a second flow. |
-| Dynamic configuration for the development step | The project decides whether it has a development environment, and CircleCI offers no other way to read a file before choosing jobs. | Forcing a development environment on every project. |
+| Dynamic configuration for the development step, once it works with a configuration source in another repository | The project decides whether it has a development environment, and CircleCI offers no other way to read a file before choosing jobs. Until then the development job halts itself. | Forcing a development environment on every project. |
 | One vault identity | Scoping by environment is paid on the vendor side, and the account model already makes projects share a fate. | One identity per environment or per repository. |
 | Migrations run by the project's command in the deployment job | The platform does not know the project's migration tool. | A platform-owned migration step. |
 | The previous platform is documentation only | Its workflows and CLI are not consumed by anything. Its secrets model and its lessons inform this page. | Porting it. |
