@@ -117,10 +117,14 @@ jobs:
             : "${CIRCLE_OIDC_TOKEN_V2:?this job needs the OIDC token}"
             : "${INFISICAL_IDENTITY_ID:?}" "${INFISICAL_PLATFORM_PROJECT_ID:?}"
             token=$(infisical login --method=oidc-auth --machine-identity-id="$INFISICAL_IDENTITY_ID" --jwt="$CIRCLE_OIDC_TOKEN_V2" --plain --silent)
-            for project in "$INFISICAL_PLATFORM_PROJECT_ID" "$NEXTNODE_INFISICAL_PROJECT"; do
-              infisical export --token "$token" --projectId "$project" --env "$NEXTNODE_ENVIRONMENT" --format dotenv-export --silent >> "$BASH_ENV"
-              echo "project $project: $(infisical export --token "$token" --projectId "$project" --env "$NEXTNODE_ENVIRONMENT" --format json --silent | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const k=JSON.parse(s).map(x=>x.key);console.log(k.length+" secret(s): "+k.join(", "))})')"
-            done
+            export_project() {
+              infisical export --token "$token" --projectId "$1" --env "$2" --format dotenv-export --silent >> "$BASH_ENV"
+              echo "project $1, environment $2: $(infisical export --token "$token" --projectId "$1" --env "$2" --format json --silent | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const k=JSON.parse(s).map(x=>x.key);console.log(k.length+" secret(s): "+k.join(", "))})')"
+            }
+            # The platform project has a single environment: one account serves every
+            # deployment environment. The application project carries the per-environment split.
+            export_project "$INFISICAL_PLATFORM_PROJECT_ID" main
+            export_project "$NEXTNODE_INFISICAL_PROJECT" "$NEXTNODE_ENVIRONMENT"
       - project-run:
           step: pnpm install --frozen-lockfile
           command: pnpm install --frozen-lockfile
