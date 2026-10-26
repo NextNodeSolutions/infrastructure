@@ -2,10 +2,17 @@
 #
 # Config source of every NextNode project pipeline. A project repository holds no
 # CI file: its pipeline definition points here and checks out its own repository.
+# The project supplies nextnode.toml, a pinned packageManager and its scripts.
 #
-#   checks  lint, formatting, types, tests of the project. No context, no secret.
-#   vault   proves the pipeline reaches Infisical through the short-lived OIDC
-#           identity of the `deploy-dev` context. Prints secret names, never values.
+#   checks       lint, formatting, types, tests of the project. No context, no secret.
+#   deploy-dev   on main, when the project declares a development environment.
+#   hold         a person approves the production deployment in CircleCI.
+#   deploy-prod  on main, after the approval.
+#
+# How secrets flow: a deployment job trades its OIDC token for a vault token
+# that lives only in the step that fetched the secrets. The environment's
+# secrets are exported to the following steps; the vault token never is, and the
+# OIDC variables are removed from the environment of every project command.
 
 version: 2.1
 
@@ -15,17 +22,34 @@ executors:
       - image: cimg/node:24.9
     resource_class: small
 
-jobs:
-  checks:
-    executor: node
+commands:
+  install-pnpm:
+    description: Install the pnpm version pinned in the project's package.json.
     steps:
-      - checkout
       - run:
           name: Install the pnpm pinned in package.json
           command: |
             pin=$(node -p "require('./package.json').packageManager ?? ''")
             [[ $pin == pnpm@* ]] || { echo "package.json must pin pnpm in packageManager, got '$pin'"; exit 1; }
             sudo npm install --global --no-fund --no-audit "$pin"
+  project-run:
+    description: Run a project command without the job's OIDC tokens in its environment.
+    parameters:
+      name:
+        type: string
+      command:
+        type: string
+    steps:
+      - run:
+          name: << parameters.name >>
+          command: env -u CIRCLE_OIDC_TOKEN -u CIRCLE_OIDC_TOKEN_V2 bash -eo pipefail -c '<< parameters.command >>'
+
+jobs:
+  checks:
+    executor: node
+    steps:
+      - checkout
+      - install-pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm lint
       - run: pnpm format:check
@@ -39,38 +63,97 @@ jobs:
               echo "No test script declared in package.json: nothing to run."
             fi
 
-  vault:
+  deploy:
+    parameters:
+      environment:
+        type: enum
+        enum: [development, production]
     executor: node
+    environment:
+      NEXTNODE_ENVIRONMENT: << parameters.environment >>
     steps:
+      - checkout
+      - install-pnpm
       - run:
-          name: Reach Infisical with the OIDC identity and list secret names
+          name: Install the platform tools
+          command: sudo npm install --global --no-fund --no-audit @infisical/cli@0.44.9 wrangler@4.152.0 smol-toml@1.9.1
+      - run:
+          name: Read nextnode.toml
           # CircleCI reserves `<<` in config v2.1, hence the escaped heredoc marker.
           command: |
-            : "${CIRCLE_OIDC_TOKEN_V2:?this job needs a context}"
-            cat > /tmp/vault.mjs \<<'JS'
-            const { INFISICAL_HOST: host, INFISICAL_IDENTITY_ID: identityId, INFISICAL_PLATFORM_PROJECT_ID: projectId, CIRCLE_OIDC_TOKEN_V2: jwt } = process.env
-            const api = async (path, init) => {
-              const response = await fetch(host + path, init)
-              const body = await response.json()
-              if (!response.ok) throw new Error(`${path}: ${response.status} ${body.message ?? ''}`)
-              return body
+            cat > /tmp/read-toml.cjs \<<'JS'
+            const { parse } = require("smol-toml");
+            const fs = require("node:fs");
+            const toml = parse(fs.readFileSync("nextnode.toml", "utf8"));
+            const env = process.env.NEXTNODE_ENVIRONMENT;
+            if (!toml.environments?.[env]) {
+              console.error(`nextnode.toml declares no environment "${env}"`);
+              process.exit(1);
             }
-            const { accessToken, expiresIn } = await api('/api/v1/auth/oidc-auth/login', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ identityId, jwt }),
-            })
-            console.log(`login ok, token valid ${expiresIn}s`)
-            const { secrets } = await api(`/api/v3/secrets/raw?workspaceId=${projectId}&environment=main&secretPath=/`, {
-              headers: { authorization: `Bearer ${accessToken}` },
-            })
-            console.log(`${secrets.length} secret(s) visible: ${secrets.map(secret => secret.secretKey).join(', ')}`)
+            const values = {
+              NEXTNODE_PROJECT: toml.project.name,
+              NEXTNODE_INFISICAL_PROJECT: toml.project.infisical_project,
+              NEXTNODE_ENTRY: toml.deploy.entry ?? ".",
+              NEXTNODE_HEALTH: toml.deploy.health ?? "/",
+              NEXTNODE_MIGRATE: toml.deploy.migrate ?? "",
+            };
+            for (const [key, value] of Object.entries(values)) {
+              if (value === undefined) { console.error(`nextnode.toml: missing ${key}`); process.exit(1); }
+              fs.appendFileSync(process.env.BASH_ENV, `export ${key}=${JSON.stringify(value)}\n`);
+              console.log(`${key}=${value}`);
+            }
             JS
-            node /tmp/vault.mjs
+            NODE_PATH=$(npm root -g) node /tmp/read-toml.cjs
+      - run:
+          name: Fetch the secrets of << parameters.environment >>
+          command: |
+            : "${CIRCLE_OIDC_TOKEN_V2:?this job needs the OIDC token}"
+            : "${INFISICAL_IDENTITY_ID:?}" "${INFISICAL_PLATFORM_PROJECT_ID:?}"
+            token=$(infisical login --method=oidc-auth --machine-identity-id="$INFISICAL_IDENTITY_ID" --jwt="$CIRCLE_OIDC_TOKEN_V2" --plain --silent)
+            for project in "$INFISICAL_PLATFORM_PROJECT_ID" "$NEXTNODE_INFISICAL_PROJECT"; do
+              infisical export --token "$token" --projectId "$project" --env "$NEXTNODE_ENVIRONMENT" --format dotenv-export --silent >> "$BASH_ENV"
+              echo "project $project: $(infisical export --token "$token" --projectId "$project" --env "$NEXTNODE_ENVIRONMENT" --format json --silent | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const k=JSON.parse(s).map(x=>x.key);console.log(k.length+" secret(s): "+k.join(", "))})')"
+            done
+      - project-run:
+          name: pnpm install --frozen-lockfile
+          command: pnpm install --frozen-lockfile
+      - project-run:
+          name: pnpm build
+          command: pnpm build
+      - project-run:
+          name: Migrations
+          command: if [ -n "$NEXTNODE_MIGRATE" ]; then echo "+ $NEXTNODE_MIGRATE"; eval "$NEXTNODE_MIGRATE"; else echo "No migrate command in nextnode.toml, nothing to run."; fi
+      - project-run:
+          name: Deploy the Worker
+          command: |
+            cd "$NEXTNODE_ENTRY"
+            wrangler deploy --env "$NEXTNODE_ENVIRONMENT" 2>&1 | tee /tmp/wrangler.log
+            url=$(grep -oE "https://[a-z0-9.-]+\.workers\.dev" /tmp/wrangler.log | head -1)
+            [ -n "$url" ] || { echo "wrangler printed no workers.dev URL"; exit 1; }
+            echo "export NEXTNODE_URL=$url" >> "$BASH_ENV"
+      - run:
+          name: Smoke
+          command: curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null -w "%{http_code} ${NEXTNODE_URL}${NEXTNODE_HEALTH}\n" "${NEXTNODE_URL}${NEXTNODE_HEALTH}"
 
 workflows:
-  ci:
+  pipeline:
     jobs:
       - checks
-      - vault:
+      - deploy:
+          name: deploy-dev
+          environment: development
           context: deploy-dev
+          requires: [checks]
+          filters: &main
+            branches:
+              only: main
+      - hold:
+          type: approval
+          requires: [deploy-dev]
+          filters: *main
+      - deploy:
+          name: deploy-prod
+          environment: production
+          context: deploy-prod
+          requires: [hold]
+          filters: *main
