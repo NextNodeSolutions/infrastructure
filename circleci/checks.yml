@@ -431,8 +431,8 @@ jobs:
             # Project shells have no BASH_ENV: the path reaches the probes through a platform file.
             node -e 'require("node:fs").writeFileSync("/home/circleci/platform/probe.json", JSON.stringify({ bash_env: process.env.BASH_ENV }))'
             stat -c '%U:%G %a %n' "$BASH_ENV" /home/circleci/platform /home/circleci/platform/platform.env
-            # What a same-user process would read: the token is there, the probes must not reach it.
-            grep -qsa CIRCLE_OIDC_TOKEN "/proc/$/environ" && echo "this platform step holds the token in /proc/$/environ"
+            # What a same-user process would read: the token is there, and the probes must not reach it.
+            grep -qsa CIRCLE_OIDC_TOKEN "/proc/$$/environ" || { echo "this platform step does not hold the token in /proc/$$/environ: the process probe would prove nothing"; exit 1; }
       - forget-job-token
       - run:
           name: "Probe: the job token is gone from the platform steps"
