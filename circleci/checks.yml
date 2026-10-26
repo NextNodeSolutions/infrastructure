@@ -2,10 +2,31 @@
 #
 # Config source of every NextNode project pipeline. A project repository holds no
 # CI file: its pipeline definition points here and checks out its own repository.
+# The project supplies nextnode.toml, a pinned packageManager and its scripts.
 #
-#   checks  lint, formatting, types, tests of the project. No context, no secret.
-#   vault   proves the pipeline reaches Infisical through the short-lived OIDC
-#           identity of the `deploy-dev` context. Prints secret names, never values.
+#   checks       lint, formatting, types, tests of the project. No context, no secret.
+#   deploy-dev   on main. Halts right after reading nextnode.toml when the project
+#                declares no development environment.
+#   hold         a person approves the production deployment in CircleCI.
+#   deploy-prod  on main, after the approval. Uploads a version that receives no
+#                traffic, checks its preview URL, promotes it only on success.
+#
+# No CircleCI context is used: every job receives an OIDC token, and the only
+# values a job needs besides secrets are identifiers written below.
+#
+# Two users share the job. The platform user owns the job: it trades the OIDC
+# token for a vault token inside one step, keeps the platform secrets in a file
+# only it can read, and runs Wrangler on the configuration the repository
+# committed. The project user runs every project command through `project-run`:
+# install, build, migrations. It receives the application's secrets of the
+# environment being deployed, nothing else, and it cannot read the platform
+# user's files or processes. Root access ends before the first project command;
+# sudo then serves only to become the project user.
+#
+# Nothing the project controls is ever evaluated by a shell. Values read from
+# nextnode.toml and produced by a deployment travel between steps as JSON files
+# owned by the platform user, read with `nn`. BASH_ENV carries only text written
+# here.
 
 version: 2.1
 
@@ -15,62 +36,247 @@ executors:
       - image: cimg/node:24.9
     resource_class: small
 
+commands:
+  read-toml:
+    description: Read nextnode.toml for the environment into a JSON file, or halt the job when the environment is not declared.
+    steps:
+      - run:
+          name: Read nextnode.toml
+          # CircleCI reserves `<<` in config v2.1, hence the escaped heredoc marker.
+          command: |
+            npm install --prefix /tmp/toml --no-fund --no-audit --silent smol-toml@1.9.1 jsonc-parser@3.3.1
+            cat > /tmp/read-toml.cjs \<<'JS'
+            const { parse } = require("/tmp/toml/node_modules/smol-toml");
+            const jsonc = require("/tmp/toml/node_modules/jsonc-parser");
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const toml = parse(fs.readFileSync("nextnode.toml", "utf8"));
+            const env = process.env.NEXTNODE_ENVIRONMENT;
+            if (!toml.environments?.[env]) {
+              console.error(`nextnode.toml declares no environment "${env}"`);
+              // A missing development environment is a choice, not an error: the job
+              // halts and the workflow goes on.
+              process.exit(env === "development" ? 3 : 1);
+            }
+            const values = {
+              project: toml.project?.name,
+              infisical_project: toml.project?.infisical_project,
+              entry: toml.deploy?.entry ?? ".",
+              health: toml.deploy?.health ?? "/",
+              migrate: toml.deploy?.migrate ?? "",
+              domain: toml.environments[env].domain,
+            };
+            // Wrangler later reads its configuration with the platform credential, so the
+            // copy the repository committed is kept aside, named explicitly to Wrangler, and
+            // restored before it runs. A build command in it would run project code with
+            // that credential, so it is refused: the build is the project's build script.
+            const configs = fs.readdirSync(values.entry).filter((f) => /^wrangler\.(jsonc?|toml)$/.test(f));
+            if (configs.length !== 1) { console.error(`expected one Wrangler configuration in ${values.entry}, found ${configs.length}`); process.exit(1); }
+            values.wrangler_config = configs[0];
+            const text = fs.readFileSync(path.join(values.entry, configs[0]), "utf8");
+            const wrangler = configs[0].endsWith(".toml") ? parse(text) : jsonc.parse(text, [], { allowTrailingComma: true });
+            if (wrangler.build?.command || wrangler.env?.[env]?.build?.command) {
+              console.error(`${configs[0]} declares a build command: the platform runs the project's build script instead`);
+              process.exit(1);
+            }
+            for (const [key, value] of Object.entries(values)) {
+              if (value === undefined) { console.error(`nextnode.toml: missing ${key}`); process.exit(1); }
+              console.log(`${key}=${value}`);
+            }
+            fs.writeFileSync("/tmp/nextnode.json", JSON.stringify(values));
+            fs.mkdirSync("/tmp/wrangler", { recursive: true });
+            fs.copyFileSync(path.join(values.entry, configs[0]), path.join("/tmp/wrangler", configs[0]));
+            JS
+            node /tmp/read-toml.cjs && status=0 || status=$?
+            if [ "$status" = 3 ]; then circleci-agent step halt; exit 0; fi
+            [ "$status" = 0 ] || exit "$status"
+            # `nn <file> <key>` reads one value of a platform JSON file, in any later step.
+            echo 'nn() { node -p "require(\"/tmp/\" + process.argv[1] + \".json\")[process.argv[2]] ?? \"\"" -- "$1" "$2"; }' >> "$BASH_ENV"
+  install-pnpm:
+    description: Install the pnpm version pinned in the project's package.json.
+    steps:
+      - run:
+          name: Install the pnpm pinned in package.json
+          command: |
+            pin=$(node -p "require('./package.json').packageManager ?? ''")
+            # A version, with an optional integrity hash. Not a URL, a tag or a path.
+            [[ $pin =~ ^pnpm@[0-9]+\.[0-9]+\.[0-9]+(\+sha[0-9]+\.[0-9a-f]+)?$ ]] || { echo "package.json must pin pnpm as pnpm@<version> in packageManager, got '$pin'"; exit 1; }
+            sudo npm install --global --no-fund --no-audit "$pin"
+  isolate-project:
+    description: Create the project user, hand it the checkout, and end root access. Sudo then only becomes that user.
+    steps:
+      - run:
+          name: Create the project user and end root access
+          command: |
+            sudo useradd --create-home --gid circleci --shell /bin/bash project
+            sudo chmod -R g+w .
+            echo 'circleci ALL=(project) NOPASSWD:SETENV: ALL' | sudo tee /etc/sudoers.d/60-project > /dev/null
+            sudo visudo -cf /etc/sudoers.d/60-project
+            sudo rm /etc/sudoers.d/50-circleci
+            if sudo -n true 2> /dev/null; then echo "root access is still available"; exit 1; fi
+            echo "root access ended, project commands run as $(sudo -nu project id -un)"
+            # Git runs what the repository configures (hooks, core.fsmonitor), and Wrangler
+            # calls git for version metadata. The platform user has no further use for git,
+            # so its git finds no repository from here on. project-run removes the variable.
+            echo 'export GIT_DIR=/nonexistent' >> "$BASH_ENV"
+  project-run:
+    description: Run a project command as the project user, with the application's secrets and without the job's OIDC tokens.
+    parameters:
+      step:
+        type: string
+        default: ""
+      command:
+        type: string
+    steps:
+      - run:
+          name: <<# parameters.step >><< parameters.step >><</ parameters.step >><<^ parameters.step >><< parameters.command >><</ parameters.step >>
+          # exec: no process the project user could read ever held the tokens.
+          # GIT_DIR: the platform's git is inert, the project's keeps working in the checkout.
+          # umask: the platform user, same group, can read and write what the project builds.
+          command: exec env -u CIRCLE_OIDC_TOKEN -u CIRCLE_OIDC_TOKEN_V2 -u GIT_DIR HOME=/home/project sudo -nE -u project bash -eo pipefail -c 'umask 002; set -a; [ -f ~/app.env ] && . ~/app.env; set +a; << parameters.command >>'
+
 jobs:
   checks:
     executor: node
     steps:
       - checkout
-      - run:
-          name: Install the pnpm pinned in package.json
+      - install-pnpm
+      - isolate-project
+      - project-run:
+          command: pnpm install --frozen-lockfile
+      - project-run:
+          command: pnpm lint
+      - project-run:
+          command: pnpm format:check
+      - project-run:
+          command: pnpm type-check
+      - project-run:
+          step: Tests
           command: |
-            pin=$(node -p "require('./package.json').packageManager ?? ''")
-            [[ $pin == pnpm@* ]] || { echo "package.json must pin pnpm in packageManager, got '$pin'"; exit 1; }
-            sudo npm install --global --no-fund --no-audit "$pin"
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm format:check
-      - run: pnpm type-check
-      - run:
-          name: Tests
-          command: |
-            if node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)"; then
+            if node -e "process.exit(require(\"./package.json\").scripts?.test ? 0 : 1)"; then
               pnpm test
             else
               echo "No test script declared in package.json: nothing to run."
             fi
 
-  vault:
+  deploy:
+    parameters:
+      environment:
+        type: enum
+        enum: [development, production]
     executor: node
+    environment:
+      NEXTNODE_ENVIRONMENT: << parameters.environment >>
+      # Identifiers, not secrets. The vault identity accepts only tokens issued for
+      # the main ref of a repository of the organization.
+      INFISICAL_IDENTITY_ID: 17af2913-5649-4771-b149-aa9bf50ff39d
+      INFISICAL_PLATFORM_PROJECT_ID: 721a5f71-3801-40e2-a06d-a4a9b431e1c7
     steps:
+      - checkout
+      - read-toml
+      - install-pnpm
       - run:
-          name: Reach Infisical with the OIDC identity and list secret names
-          # CircleCI reserves `<<` in config v2.1, hence the escaped heredoc marker.
+          name: Install the platform tools
+          command: sudo npm install --global --no-fund --no-audit @infisical/cli@0.44.9 wrangler@4.152.0
+      - isolate-project
+      - run:
+          name: Fetch the secrets of << parameters.environment >>
           command: |
-            : "${CIRCLE_OIDC_TOKEN_V2:?this job needs a context}"
-            cat > /tmp/vault.mjs \<<'JS'
-            const { INFISICAL_HOST: host, INFISICAL_IDENTITY_ID: identityId, INFISICAL_PLATFORM_PROJECT_ID: projectId, CIRCLE_OIDC_TOKEN_V2: jwt } = process.env
-            const api = async (path, init) => {
-              const response = await fetch(host + path, init)
-              const body = await response.json()
-              if (!response.ok) throw new Error(`${path}: ${response.status} ${body.message ?? ''}`)
-              return body
-            }
-            const { accessToken, expiresIn } = await api('/api/v1/auth/oidc-auth/login', {
-              method: 'POST',
-              headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ identityId, jwt }),
-            })
-            console.log(`login ok, token valid ${expiresIn}s`)
-            const { secrets } = await api(`/api/v3/secrets/raw?workspaceId=${projectId}&environment=main&secretPath=/`, {
-              headers: { authorization: `Bearer ${accessToken}` },
-            })
-            console.log(`${secrets.length} secret(s) visible: ${secrets.map(secret => secret.secretKey).join(', ')}`)
+            : "${CIRCLE_OIDC_TOKEN_V2:?this job needs the OIDC token}"
+            : "${INFISICAL_IDENTITY_ID:?}" "${INFISICAL_PLATFORM_PROJECT_ID:?}"
+            # Reads the vault's JSON export, prints the names, writes shell literals.
+            cat > /tmp/export.cjs \<<'JS'
+            let s = ""; process.stdin.on("data", (d) => s += d).on("end", () => {
+              const secrets = JSON.parse(s);
+              const literal = (value) => `'${String(value).replace(/'/g, `'\\''`)}'`;
+              process.stdout.write(secrets.map((x) => `export ${x.key}=${literal(x.value)}\n`).join(""));
+              console.error(`${secrets.length} secret(s): ${secrets.map((x) => x.key).join(", ")}`);
+            });
             JS
-            node /tmp/vault.mjs
+            token=$(infisical login --method=oidc-auth --machine-identity-id="$INFISICAL_IDENTITY_ID" --jwt="$CIRCLE_OIDC_TOKEN_V2" --plain --silent)
+            export_project() { infisical export --token "$token" --projectId "$1" --env "$2" --format json --silent | node /tmp/export.cjs; }
+            # The platform project has a single environment: one account serves every
+            # deployment environment. Its secrets stay with the platform user.
+            echo -n "platform: "; (umask 077; export_project "$INFISICAL_PLATFORM_PROJECT_ID" main > /tmp/platform.env)
+            # The application project carries the per-environment split. Its secrets go
+            # to the project user, in a file only that user reads.
+            echo -n "application: "; export_project "$(nn nextnode infisical_project)" "$NEXTNODE_ENVIRONMENT" | sudo -nu project sh -c 'umask 077; cat > /home/project/app.env'
+            # The job token has done its work. Every later step sources this file first.
+            { echo 'unset CIRCLE_OIDC_TOKEN CIRCLE_OIDC_TOKEN_V2'; cat "$BASH_ENV"; } > "$BASH_ENV.next" && mv "$BASH_ENV.next" "$BASH_ENV"
+      - project-run:
+          command: pnpm install --frozen-lockfile
+      - project-run:
+          command: pnpm build
+      - project-run:
+          step: Migrations
+          # sudo drops BASH_ENV, so a project shell has no `nn`: it reads the JSON itself.
+          command: migrate=$(node -p "require(\"/tmp/nextnode.json\").migrate"); if [ -n "$migrate" ]; then echo "+ $migrate"; eval "$migrate"; else echo "No migrate command in nextnode.toml, nothing to run."; fi
+      - run:
+          name: Deploy
+          # Development replaces what serves, and so does a production Worker's first
+          # deployment, when nothing serves yet. Every other production deployment is a
+          # version without traffic, promoted by a later step. Wrangler runs as the
+          # platform user on the committed configuration: it bundles and uploads, it
+          # does not run project code.
+          command: |
+            cd "$(nn nextnode entry)"
+            config=$(nn nextnode wrangler_config)
+            rm -f "$config" && cp "/tmp/wrangler/$config" "$config"
+            set -a; . /tmp/platform.env; set +a
+            workers_dev_url() { grep -oE "https://[a-z0-9.-]+\.workers\.dev" /tmp/wrangler.log | head -1 || true; }
+            record() { node -e 'require("node:fs").writeFileSync("/tmp/deploy.json", JSON.stringify({ version: process.argv[1], url: process.argv[2] }))' -- "$1" "$2"; }
+            direct() {
+              wrangler deploy --config "$config" --env "$NEXTNODE_ENVIRONMENT" 2>&1 | tee /tmp/wrangler.log
+              # The health check targets the workers.dev URL when there is one, else the declared domain.
+              url=$(workers_dev_url)
+              record "" "${url:-https://$(nn nextnode domain)}"
+            }
+            if [ "$NEXTNODE_ENVIRONMENT" = development ]; then direct; exit 0; fi
+            if ! listed=$(wrangler versions list --config "$config" --env "$NEXTNODE_ENVIRONMENT" 2>&1); then
+              # 10007 is Cloudflare's code for a Worker that does not exist. Any other error stops here.
+              printf '%s\n' "$listed" | grep -q "code: 10007" || { printf '%s\n' "$listed"; exit 1; }
+              echo "First deployment of this Worker: nothing serves yet, deployed directly."
+              direct; exit 0
+            fi
+            wrangler versions upload --config "$config" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" 2>&1 | tee /tmp/wrangler.log
+            version=$(grep -oE "Worker Version ID: [0-9a-f-]+" /tmp/wrangler.log | head -1 | cut -d" " -f4 || true)
+            preview=$(workers_dev_url)
+            [ -n "$version" ] || { echo "wrangler printed no version id"; exit 1; }
+            [ -n "$preview" ] || { echo "wrangler printed no preview URL: the production Worker needs preview_urls"; exit 1; }
+            record "$version" "$preview"
+      - run:
+          name: Smoke
+          command: |
+            url="$(nn deploy url)$(nn nextnode health)"
+            curl -fsS --retry 5 --retry-delay 3 --retry-all-errors -o /dev/null -w "%{http_code} $url\n" "$url"
+      - run:
+          name: Promote the version to all traffic
+          command: |
+            version=$(nn deploy version)
+            [ -n "$version" ] || { echo "Deployed directly, already serving."; exit 0; }
+            cd "$(nn nextnode entry)"
+            config=$(nn nextnode wrangler_config)
+            rm -f "$config" && cp "/tmp/wrangler/$config" "$config"
+            set -a; . /tmp/platform.env; set +a
+            wrangler versions deploy "$version@100%" --config "$config" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" --yes
 
 workflows:
-  ci:
+  pipeline:
     jobs:
       - checks
-      - vault:
-          context: deploy-dev
+      - deploy:
+          name: deploy-dev
+          environment: development
+          requires: [checks]
+          filters: &main
+            branches:
+              only: main
+      - hold:
+          type: approval
+          requires: [deploy-dev]
+          filters: *main
+      - deploy:
+          name: deploy-prod
+          environment: production
+          requires: [hold]
+          filters: *main

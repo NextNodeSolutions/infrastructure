@@ -47,7 +47,7 @@ Each boundary carries a contract.
 | CircleCI to Infisical | Each job receives an OIDC token whose subject names the CircleCI organization, the project, the user who caused the run, the repository and the git ref. Infisical accepts it for one machine identity, bound to the organization and to the `main` ref of the organization's repositories, and returns a vault token that expires within minutes. |
 | Job to Pulumi | Pulumi owns every Cloudflare resource it can express. The program reads `nextnode.toml`, keeps its state in an R2 bucket of the platform account, and exposes the identifiers the Worker needs as stack outputs. |
 | Job to Wrangler | Wrangler does only what Pulumi cannot do cleanly, which is bundling the Worker and uploading code and static assets. It reads the binding identifiers Pulumi produced. It is the Cloudflare-specific port of the deployment. Another target, such as AWS, gets its own port behind the same job. |
-| Job to the project | The project's own commands run for install, build and migrations. They receive the public variables and the secrets of the environment being deployed, and nothing that would let them talk to the vault. |
+| Job to the project | The project's own commands run for install, build and migrations, as a second user of the job. They receive the public variables and the application's secrets of the environment being deployed, and nothing else: not the platform's credentials, not anything that would let them talk to the vault. |
 
 ## The pipeline
 
@@ -112,10 +112,12 @@ sequenceDiagram
 Three rules keep the secrets where they belong.
 
 - **The vault token never leaves the step that obtained it.** Login and export happen in one shell. Nothing is written to the file CircleCI sources before each step.
-- **Project code never sees the job token.** Install, build and the migration command run with the OIDC variables removed from their environment, after the vault step has ended. A dependency with a lifecycle script cannot trade the job token for a vault token.
-- **Production secrets exist only in `deploy-prod`.** That job exports the production environment and no other. It runs on `main` only, after the approval when the project has a development environment, and straight after `checks` when it has none. Infisical cannot tell the two deployment jobs apart, because both tokens carry the same subject. The central configuration is what tells them apart, and only a pull request here can change it.
+- **Project code never sees the job token, nor the platform's credentials.** Project commands run as a second user, in a process that replaced the step shell without the OIDC variables. The variables are removed from every later step once the vault step has ended, the platform's secrets live in a file only the platform user reads, and root access ends before the first project command. A dependency with a lifecycle script, even one that leaves a process behind, finds neither token in its environment, in a file it may read, or in a process it may inspect.
+- **Wrangler is the platform's, not the project's.** It runs as the platform user with the Cloudflare credential, on the Wrangler configuration the repository committed: the job keeps that copy aside before any project command runs, restores it and names it to Wrangler before deploying. A build command in that configuration is refused when the job reads it, because the build is the project's build script, run as the project user.
+- **Nothing the project controls is evaluated by a shell.** The values of `nextnode.toml` and the results of a deployment travel between steps as JSON files owned by the platform user, never as lines of a sourced shell file.
+- **An application's production secrets exist only in `deploy-prod`.** That job exports the application's production environment and no other. It runs on `main` only, after the approval when the project has a development environment, and straight after `checks` when it has none. Infisical cannot tell the two deployment jobs apart, because both tokens carry the same subject. The central configuration is what tells them apart, and only a pull request here can change it.
 
-Development deploys directly to all traffic. Production uploads a version that receives no traffic, runs the smoke request against it, and promotes it only on success.
+Development deploys directly to all traffic. Production uploads a version that receives no traffic, runs the smoke request against its preview URL, and promotes it only on success. The preview URL is the gate, so a production Worker keeps preview URLs enabled.
 
 ### What a failure leaves behind
 
@@ -131,10 +133,10 @@ Development deploys directly to all traffic. Production uploads a version that r
 
 ## Secrets and identities
 
-Infisical holds every value. Nothing secret is written in this repository, in a project repository, in a CircleCI context or in a pipeline log.
+Infisical holds every value. Nothing secret is written in this repository, in a project repository, in CircleCI or in a pipeline log.
 
-- **One platform project** holds what every deployment needs, with one Infisical environment per deployment environment. That is the Cloudflare API token and account of each environment, the credentials of the state bucket, and the passphrase that encrypts Pulumi's secret outputs.
-- **One project per application**, named after the repository, with the same environments, holds the application's own secrets. Locally, `infisical run --env development` replaces a dotenv file.
+- **One platform project** holds what every deployment needs, in a single Infisical environment named `main`. That is the Cloudflare API token and account, the credentials of the state bucket, and the passphrase that encrypts Pulumi's secret outputs. One account serves every deployment environment, so a split by environment would hold the same values twice while every job could read both anyway.
+- **One project per application**, named after the repository, with one Infisical environment per deployment environment, holds the application's own secrets. Locally, `infisical run --env development` replaces a dotenv file.
 - **One machine identity**, Viewer of the platform project and of every application project. It logs in through OIDC Auth, bound to the CircleCI organization as audience and to a subject pattern that names the organization, the GitHub organization and the `main` ref. A pipeline on another ref gets nothing.
 
 Why a single identity rather than one per environment or per repository. On Infisical's free plan, a role covers every environment of a project, and the mechanisms that would scope an identity to one environment are paid or retired. Identities are billed per unit, humans and machines together. Splitting projects per environment would buy a boundary that the account model already undoes. So the identity sees everything, and the configuration decides what each job exports. Re-check this when the plan or the vendor changes, in the Infisical pricing page and in the access-control documentation.
@@ -147,8 +149,8 @@ Durable credentials and their rotation:
 
 | Credential | Lives in | Rotated when |
 | --- | --- | --- |
-| Cloudflare API token, one per environment, scoped to the account and the products in use | Platform project | A maintainer leaves, a value was displayed, or on a fixed schedule. Cloudflare offers no OIDC federation, so this is the one long-lived secret of a deployment. |
-| CircleCI personal token used to register projects | Platform project | Same triggers. It is never needed by a pipeline. |
+| Cloudflare API token, allowed on every product of the account but not on what manages the account itself, such as tokens, members, settings and billing | Platform project | A maintainer leaves, a value was displayed, or on a fixed schedule. Cloudflare offers no OIDC federation, so this is the one long-lived secret of a deployment. |
+| CircleCI personal token used to register projects and to run the canary | The operator's own vault, never a project the machine identity can read | Same triggers. It is never needed by a pipeline, and a job that could read it would control the CI. |
 | State bucket credentials and Pulumi passphrase | Platform project | Same triggers. Rotating the passphrase re-encrypts the stacks. |
 
 ## The project's contract
@@ -186,24 +188,25 @@ These are the facts that forced the decisions above. Each names where to look wh
 | Fact | Consequence | Re-check in |
 | --- | --- | --- |
 | CircleCI's second-generation OIDC subject ends with the repository and the git ref, and custom-webhook runs carry no ref. | The subject binding can pin `main`. API-triggered runs must be checked before relying on them. | CircleCI documentation, OpenID Connect tokens. |
-| CircleCI no longer requires a context for a job to receive an OIDC token. | Contexts can go, with the non-secret identifiers moved into the configuration. To confirm on a pipeline before removing them. | Same page, and one pipeline run. |
+| Every CircleCI job receives the OIDC token, with or without a context. | No context is used. The identifiers a job needs are written in the configuration. | CircleCI documentation, OpenID Connect tokens. |
 | A pipeline whose configuration comes from another repository is not displayed in the CircleCI configuration editor, and `CIRCLE_REPOSITORY_URL` is empty. | Read the file from this repository. Take the repository from the checkout, not from that variable. | CircleCI documentation, GitHub App pipelines. |
 | CircleCI reserves `<<` in configuration files. | A shell heredoc inside a `run` step must escape its marker as `\<<`. | CircleCI documentation, configuration reference. |
 | On the `cimg` images, a global npm install needs `sudo`, and `CI=true` makes `pnpm install` frozen by default. | The install step says so. Error messages at that step point here. | The image documentation. |
+| On the `cimg` images sudo is passwordless, the CircleCI agent that holds the job token runs as root, and a process may read the environment and overwrite the files of any process of its own user. | Project commands run as a second user created in the job, through `exec`; the OIDC variables are unset at the head of `BASH_ENV` after the vault step; root access ends once the tools are installed and sudo keeps one rule, to become the project user. | The image documentation, and a probe step on the canary that lists which processes expose the token. |
 | Infisical reads bound claims through dotted paths and ignores array values. | Only `sub` and `aud` can be bound for CircleCI. | Infisical source, OIDC auth service and the dot-access helper. |
 | On the Infisical free plan, custom roles are refused with a plan error, additional privileges are refused for recent projects as a retired feature, folder access controls are paid, and identities are billed per unit. | A free identity sees every environment of each project it belongs to. | Infisical pricing page and access-control documentation. |
 | Infisical ignores a request that only turns delete protection off. | To delete a protected identity, send the name together with the flag, then delete. | Infisical source, identity service. |
-| Cloudflare offers no OIDC federation for its API. | An API token per environment stays in the vault and is rotated. | Cloudflare API documentation. |
+| Cloudflare offers no OIDC federation for its API. | An API token stays in the vault and is rotated. | Cloudflare API documentation. |
+| Wrangler calls git in the working directory for version metadata, and git runs commands the repository configures, such as hooks or a file system monitor. | After the project user is created, the platform user's git points at no repository, so Wrangler finds none and runs nothing from the checkout. | Wrangler source, the deployment metadata helpers, and git configuration documentation. |
+| Wrangler refuses to upload a version of a Worker that was never deployed, and a version carries no change of routes or domains. | The first production deployment of a Worker goes through a direct deployment, with nothing serving yet. Routes and domains are Pulumi's, never a version's. | Wrangler documentation on versions and gradual deployments. |
 
 ## Open points
 
 Each is validated on the canary repository before it reaches a real project.
 
-- Dynamic configuration when the configuration source is another repository, through the continuation API. The fallback is a static workflow where the development jobs exit at once when the project has no development environment.
+- Dynamic configuration when the configuration source is another repository, through the continuation API. It is what lets a project without a development environment reach production straight after the checks. The fallback, a static workflow where the development job halts at once when the project has no development environment, still routes such a project through the approval.
 - Pulumi's S3 backend against R2, with path-style addressing and the automatic region. The lock is a file, so one deployment at a time per stack.
-- Gradual Worker versions on a Worker that serves static assets. The fallback is a plain deployment with a rollback on smoke failure.
-- The scopes of the Cloudflare API token per environment.
-- Whether the OIDC token is present in a job that uses no context.
+- The scopes of the Cloudflare API token.
 
 ## Identifiers of the shared resources
 

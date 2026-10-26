@@ -7,16 +7,18 @@ These rules hold for people and agents alike. A directory whose rules differ add
 A change that weakens one is wrong, even when it compiles.
 
 1. **Every project runs the configuration from `main`.** A merge here is a release to every NextNode project at once. `main` accepts pull requests only, with a squash merge, under the organization rulesets.
-2. **No secret value exists in this repository, in a CircleCI context, or in a log.** A job obtains secrets at run time by trading its OIDC token for a short-lived vault token. Contexts carry identifiers only.
+2. **No secret value exists in this repository, in CircleCI, or in a log.** A job obtains secrets at run time by trading its OIDC token for a short-lived vault token. No CircleCI context exists, so nothing can be hidden in one.
 3. **A branch pipeline touches no secret.** Only jobs that run on `main` log in to the vault, so a pull request from any author is safe to run.
 4. **Project code never runs with the job token or the vault token in its environment.** Install, build and migration commands run after the vault step has ended, with the OIDC variables removed.
-5. **Production secrets are read only by the production deployment job.** That job runs on `main` only, after the approval when the project has a development environment, and straight after the checks when it has none. The vault cannot tell the deployment jobs apart, so this configuration is what does.
+5. **An application's production secrets are read only by the production deployment job.** That job runs on `main` only, after the approval when the project has a development environment, and straight after the checks when it has none. The vault cannot tell the deployment jobs apart, so this configuration is what does.
 6. **A project repository holds no CI file.** Its pipeline definition points at this repository. Anything a project must express goes through `nextnode.toml` or its package scripts.
 
 ## Architecture rules
 
 - **Keep the configuration one static file, plus the setup stage that reads `nextnode.toml`.** Every project runs the same workflow. Behavior differs through the pipeline parameters the setup stage produces, never through a second file or a per-project branch of the configuration.
 - **Pulumi owns every resource it can express. Wrangler only bundles and uploads the Worker.** Resource creation that happens outside Pulumi is invisible to the state and will be fought by the next run. Wrangler is the Cloudflare port of the deployment, and another target gets its own port behind the same job.
+- **Project code runs as the project user, platform tools as the platform user.** A new step that runs anything from the project repository goes through `project-run`. A step that holds a platform credential never runs project code and reads only what the repository committed, which is why the committed Wrangler configuration is restored and named to Wrangler before it runs, and why a build command in it is refused.
+- **A value the project controls never reaches a shell as code.** Values from `nextnode.toml` or from a deployment go through the platform's JSON files and `nn`, never into `BASH_ENV`, an `eval`, or an unquoted expansion. The one exception is the migration command, which is the project's own command run as the project user.
 - **Migrations are the project's command, named in `nextnode.toml`.** The platform does not know the project's migration tool and must not guess it.
 - **Identifiers that are not secret still never reach a project repository as copies.** They live in the vault, in the registration script, or in this configuration, so that a rename happens in one place.
 - **A vendor workaround is written next to the vendor fact that forced it.** The constraints table in the architecture page names where to re-check each fact. Remove the workaround when the fact changes, in the same change.
@@ -27,7 +29,7 @@ A change that weakens one is wrong, even when it compiles.
 - **Write a `run` step on one line when its name would repeat its command.** A named step earns its name by explaining something the command does not.
 - **Pin executor images by tag now, by digest once the platform image exists.** A floating tag changes the toolchain under every project at once.
 - **Comments are in English and explain intent, not syntax.** The file is read by people who did not write it, in every project's pipeline view.
-- **Keep the install step strict.** The pnpm version comes from the project's `packageManager` field and the lockfile is frozen. A project that drifts fails loudly at the first step instead of deploying something else.
+- **Keep the install step strict.** The pnpm version comes from the project's `packageManager` field, accepted only as a plain version, and the lockfile is frozen. A project that drifts fails loudly at the first step instead of deploying something else.
 
 ## Checks
 
