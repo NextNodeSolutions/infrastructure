@@ -21,7 +21,7 @@ stateDiagram-v2
 
 1. A push on a project repository starts a CircleCI pipeline that reads its configuration from this repository.
 2. The project's own scripts run the checks. A branch stops here.
-3. On `main`, the deployment job logs in to the vault with the job's OIDC token, creates or updates the Cloudflare resources with Pulumi, builds the project, runs its migrations, uploads the Worker with Wrangler and checks the health route.
+3. On `main`, the deployment job logs in to the vault with the job's OIDC token, builds the project, runs its migrations, uploads the Worker with Wrangler, attaches its domain and converges its resources with Pulumi, and checks the health route.
 4. Development is deployed first when the project has one, then a person approves, then production.
 
 [docs/architecture.md](docs/architecture.md) explains each part, the secrets model, what a failure leaves behind, and the decisions with their reasons. [AGENTS.md](AGENTS.md) holds the rules for changing this repository.
