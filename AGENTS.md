@@ -17,6 +17,7 @@ A change that weakens one is wrong, even when it compiles.
 
 - **Keep the configuration one static file, plus the setup stage that reads `nextnode.toml`.** Every project runs the same workflow. Behavior differs through the pipeline parameters the setup stage produces, never through a second file or a per-project branch of the configuration.
 - **Pulumi owns every resource it can express. Wrangler only bundles and uploads the Worker.** Resource creation that happens outside Pulumi is invisible to the state and will be fought by the next run. Wrangler is the Cloudflare port of the deployment, and another target gets its own port behind the same job.
+- **Project code runs as the project user, platform tools as the platform user.** A new step that runs anything from the project repository goes through `project-run`. A step that holds a platform credential never runs project code, and the Wrangler configuration of a project declares no build command for that reason.
 - **Migrations are the project's command, named in `nextnode.toml`.** The platform does not know the project's migration tool and must not guess it.
 - **Identifiers that are not secret still never reach a project repository as copies.** They live in the vault, in the registration script, or in this configuration, so that a rename happens in one place.
 - **A vendor workaround is written next to the vendor fact that forced it.** The constraints table in the architecture page names where to re-check each fact. Remove the workaround when the fact changes, in the same change.
@@ -27,7 +28,7 @@ A change that weakens one is wrong, even when it compiles.
 - **Write a `run` step on one line when its name would repeat its command.** A named step earns its name by explaining something the command does not.
 - **Pin executor images by tag now, by digest once the platform image exists.** A floating tag changes the toolchain under every project at once.
 - **Comments are in English and explain intent, not syntax.** The file is read by people who did not write it, in every project's pipeline view.
-- **Keep the install step strict.** The pnpm version comes from the project's `packageManager` field and the lockfile is frozen. A project that drifts fails loudly at the first step instead of deploying something else.
+- **Keep the install step strict.** The pnpm version comes from the project's `packageManager` field, accepted only as a plain version, and the lockfile is frozen. A project that drifts fails loudly at the first step instead of deploying something else.
 
 ## Checks
 

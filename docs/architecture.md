@@ -47,7 +47,7 @@ Each boundary carries a contract.
 | CircleCI to Infisical | Each job receives an OIDC token whose subject names the CircleCI organization, the project, the user who caused the run, the repository and the git ref. Infisical accepts it for one machine identity, bound to the organization and to the `main` ref of the organization's repositories, and returns a vault token that expires within minutes. |
 | Job to Pulumi | Pulumi owns every Cloudflare resource it can express. The program reads `nextnode.toml`, keeps its state in an R2 bucket of the platform account, and exposes the identifiers the Worker needs as stack outputs. |
 | Job to Wrangler | Wrangler does only what Pulumi cannot do cleanly, which is bundling the Worker and uploading code and static assets. It reads the binding identifiers Pulumi produced. It is the Cloudflare-specific port of the deployment. Another target, such as AWS, gets its own port behind the same job. |
-| Job to the project | The project's own commands run for install, build and migrations. They receive the public variables and the secrets of the environment being deployed, and nothing that would let them talk to the vault. |
+| Job to the project | The project's own commands run for install, build and migrations, as a second user of the job. They receive the public variables and the application's secrets of the environment being deployed, and nothing else: not the platform's credentials, not anything that would let them talk to the vault. |
 
 ## The pipeline
 
@@ -112,7 +112,8 @@ sequenceDiagram
 Three rules keep the secrets where they belong.
 
 - **The vault token never leaves the step that obtained it.** Login and export happen in one shell. Nothing is written to the file CircleCI sources before each step.
-- **Project code never sees the job token.** Every project command runs in a process that replaced the step shell without the OIDC variables, the variables are removed from every later step before anything else runs once the vault step has ended, and the image's sudo is dropped before the first project command. A dependency with a lifecycle script finds the token neither in its environment nor in a process it is allowed to read.
+- **Project code never sees the job token, nor the platform's credentials.** Project commands run as a second user, in a process that replaced the step shell without the OIDC variables. The variables are removed from every later step once the vault step has ended, the platform's secrets live in a file only the platform user reads, and root access ends before the first project command. A dependency with a lifecycle script, even one that leaves a process behind, finds neither token in its environment, in a file it may read, or in a process it may inspect.
+- **Wrangler is the platform's, not the project's.** It runs as the platform user with the Cloudflare credential, so the Wrangler configuration of a project declares no build command: the build is the project's build script, run as the project user.
 - **An application's production secrets exist only in `deploy-prod`.** That job exports the application's production environment and no other. It runs on `main` only, after the approval when the project has a development environment, and straight after `checks` when it has none. Infisical cannot tell the two deployment jobs apart, because both tokens carry the same subject. The central configuration is what tells them apart, and only a pull request here can change it.
 
 Development deploys directly to all traffic. Production uploads a version that receives no traffic, runs the smoke request against its preview URL, and promotes it only on success. The preview URL is the gate, so a production Worker keeps preview URLs enabled.
@@ -147,7 +148,7 @@ Durable credentials and their rotation:
 
 | Credential | Lives in | Rotated when |
 | --- | --- | --- |
-| Cloudflare API token, scoped to the account and the products in use | Platform project | A maintainer leaves, a value was displayed, or on a fixed schedule. Cloudflare offers no OIDC federation, so this is the one long-lived secret of a deployment. |
+| Cloudflare API token, allowed on every product of the account but not on what manages the account itself, such as tokens, members, settings and billing | Platform project | A maintainer leaves, a value was displayed, or on a fixed schedule. Cloudflare offers no OIDC federation, so this is the one long-lived secret of a deployment. |
 | CircleCI personal token used to register projects and to run the canary | The operator's own vault, never a project the machine identity can read | Same triggers. It is never needed by a pipeline, and a job that could read it would control the CI. |
 | State bucket credentials and Pulumi passphrase | Platform project | Same triggers. Rotating the passphrase re-encrypts the stacks. |
 
@@ -190,7 +191,7 @@ These are the facts that forced the decisions above. Each names where to look wh
 | A pipeline whose configuration comes from another repository is not displayed in the CircleCI configuration editor, and `CIRCLE_REPOSITORY_URL` is empty. | Read the file from this repository. Take the repository from the checkout, not from that variable. | CircleCI documentation, GitHub App pipelines. |
 | CircleCI reserves `<<` in configuration files. | A shell heredoc inside a `run` step must escape its marker as `\<<`. | CircleCI documentation, configuration reference. |
 | On the `cimg` images, a global npm install needs `sudo`, and `CI=true` makes `pnpm install` frozen by default. | The install step says so. Error messages at that step point here. | The image documentation. |
-| On the `cimg` images sudo is passwordless, the CircleCI agent that holds the job token runs as root, and a process may read the environment of any process of its own user. | Project commands replace the step shell with `exec`, the OIDC variables are unset at the head of `BASH_ENV` after the vault step, and sudo is dropped once the tools are installed. | The image documentation, and a probe step on the canary that lists which processes expose the token. |
+| On the `cimg` images sudo is passwordless, the CircleCI agent that holds the job token runs as root, and a process may read the environment and overwrite the files of any process of its own user. | Project commands run as a second user created in the job, through `exec`; the OIDC variables are unset at the head of `BASH_ENV` after the vault step; root access ends once the tools are installed and sudo keeps one rule, to become the project user. | The image documentation, and a probe step on the canary that lists which processes expose the token. |
 | Infisical reads bound claims through dotted paths and ignores array values. | Only `sub` and `aud` can be bound for CircleCI. | Infisical source, OIDC auth service and the dot-access helper. |
 | On the Infisical free plan, custom roles are refused with a plan error, additional privileges are refused for recent projects as a retired feature, folder access controls are paid, and identities are billed per unit. | A free identity sees every environment of each project it belongs to. | Infisical pricing page and access-control documentation. |
 | Infisical ignores a request that only turns delete protection off. | To delete a protected identity, send the name together with the flag, then delete. | Infisical source, identity service. |
@@ -201,7 +202,7 @@ These are the facts that forced the decisions above. Each names where to look wh
 
 Each is validated on the canary repository before it reaches a real project.
 
-- Dynamic configuration when the configuration source is another repository, through the continuation API. The fallback is a static workflow where the development jobs exit at once when the project has no development environment.
+- Dynamic configuration when the configuration source is another repository, through the continuation API. It is what lets a project without a development environment reach production straight after the checks. The fallback, a static workflow where the development job halts at once when the project has no development environment, still routes such a project through the approval.
 - Pulumi's S3 backend against R2, with path-style addressing and the automatic region. The lock is a file, so one deployment at a time per stack.
 - The scopes of the Cloudflare API token.
 
