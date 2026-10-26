@@ -83,7 +83,7 @@ Rules that the diagram encodes:
 
 ## The deployment job
 
-One job, parameterized by the environment. It runs on CircleCI's Node image at a pinned tag, and installs the platform tools at exact versions into the platform user's home: Wrangler, the Infisical CLI, the configuration parsers, later Pulumi with its providers. CircleCI caches that installation under a key made of the versions, and the project's pnpm store under a key made of its lockfile, so a job spends its time on the project, not on downloads. Changing a tool version changes the key and rebuilds the cache once.
+One job, parameterized by the environment. It runs on CircleCI's Node image at a pinned tag, and installs the platform tools at exact versions into the platform user's home: Wrangler, the Infisical CLI, the configuration parsers, Pulumi with its Cloudflare provider. CircleCI caches that installation under a key made of the versions, and the project's pnpm store under a key made of its lockfile, so a job spends its time on the project, not on downloads. Changing a tool version changes the key and rebuilds the cache once.
 
 ```mermaid
 sequenceDiagram
@@ -97,6 +97,7 @@ sequenceDiagram
     J->>V: login with the identity id and the job token
     V-->>J: vault token that expires within minutes
     J->>V: export the environment's secrets into the step shell
+    J->>F: does the environment's Worker exist yet
     J->>S: pulumi reads and locks the stack state
     J->>F: pulumi creates or updates the resources of the environment
     J->>J: install, build and migrate with the tokens removed from the environment
@@ -107,13 +108,19 @@ sequenceDiagram
     else production and the smoke fails
         Note over J,F: the previous version keeps serving
     end
+    opt the Worker did not exist before this deployment
+        J->>F: pulumi attaches the custom domain to the new Worker
+    end
 ```
+
+The Pulumi program is part of the pipeline file. The job checks out the project, not this repository, and no claim of the job token names the configuration's ref, so a program fetched from here could not follow the pull request that changes it. In the file, the canary validates the program and the configuration together. The program reads what the job read from `nextnode.toml`, keeps its state in the platform's R2 bucket under the project's name and the environment, and runs as the platform user from a directory of its own, never from the checkout.
 
 Three rules keep the secrets where they belong.
 
 - **The vault token never leaves the step that obtained it.** Login and export happen in one shell. Nothing is written to the file CircleCI sources before each step.
 - **Project code never sees the job token, nor the platform's credentials.** Project commands run as a second user, in a process that replaced the step shell without the OIDC variables. The variables are removed from every later step once the vault step has ended, the platform's secrets live in a file only the platform user reads, and root access ends before the first project command. A dependency with a lifecycle script, even one that leaves a process behind, finds neither token in its environment, in a file it may read, or in a process it may inspect.
 - **Wrangler is the platform's, not the project's.** It runs as the platform user with the Cloudflare credential, on the Wrangler configuration the repository committed: the job keeps that copy aside before any project command runs, restores it and names it to Wrangler before deploying. A build command in that configuration is refused when the job reads it, because the build is the project's build script, run as the project user.
+- **Routes and domains belong to Pulumi.** The environment's domain is the one `nextnode.toml` declares, attached as a custom domain to the Worker that Wrangler deploys for that environment. A route or domain in the Wrangler configuration is refused when the job reads it, because every deployment would otherwise fight over it.
 - **Nothing the project controls is evaluated by a shell.** The values of `nextnode.toml` and the results of a deployment travel between steps as JSON files owned by the platform user, never as lines of a sourced shell file.
 - **An application's production secrets exist only in `deploy-prod`.** That job exports the application's production environment and no other. It runs on `main` only, after the approval when the project has a development environment, and straight after `checks` when it has none. Infisical cannot tell the two deployment jobs apart, because both tokens carry the same subject. The central configuration is what tells them apart, and only a pull request here can change it.
 
@@ -126,6 +133,7 @@ Development deploys directly to all traffic. Production uploads a version that r
 | `checks` fails | Nothing deployed. The pull request shows the failing step. |
 | Vault login fails | Nothing deployed. Either the identity binding rejects the ref, or the identity is not a member of the project. The step prints the Infisical error. |
 | Pulumi fails part way | The stack state records what was created. The next run converges, because the program is declarative. The lock is released when the process ends. |
+| The job ends between the upload of a first Worker and the attachment of its domain | The Worker serves on its workers.dev URL only. The next run finds the Worker and attaches the domain before the build. |
 | Migration fails | Resources are up to date, the previous Worker still serves. The project's migration tool owns the recovery. |
 | Development smoke fails | The development Worker has already been replaced, production is untouched. |
 | Production smoke fails | The new version is uploaded but never promoted. The previous version keeps serving. |
@@ -135,7 +143,7 @@ Development deploys directly to all traffic. Production uploads a version that r
 
 Infisical holds every value. Nothing secret is written in this repository, in a project repository, in CircleCI or in a pipeline log.
 
-- **One platform project** holds what every deployment needs, in a single Infisical environment named `main`. That is the Cloudflare API token and account, the credentials of the state bucket, and the passphrase that encrypts Pulumi's secret outputs. One account serves every deployment environment, so a split by environment would hold the same values twice while every job could read both anyway.
+- **One platform project** holds what every deployment needs, in a single Infisical environment named `main`. That is the Cloudflare API token and account, and the passphrase that encrypts Pulumi's secret outputs. The state bucket needs no credential of its own: R2's S3 API accepts the API token as a key pair, so the token that creates the resources also keeps their state. One account serves every deployment environment, so a split by environment would hold the same values twice while every job could read both anyway.
 - **One project per application**, named after the repository, with one Infisical environment per deployment environment, holds the application's own secrets. Locally, `infisical run --env development` replaces a dotenv file.
 - **One machine identity**, Viewer of the platform project and of every application project. It logs in through OIDC Auth, bound to the CircleCI organization as audience and to a subject pattern that names the organization, the GitHub organization and the `main` ref. A pipeline on another ref gets nothing.
 
@@ -151,7 +159,7 @@ Durable credentials and their rotation:
 | --- | --- | --- |
 | Cloudflare API token, allowed on every product of the account but not on what manages the account itself, such as tokens, members, settings and billing | Platform project | A maintainer leaves, a value was displayed, or on a fixed schedule. Cloudflare offers no OIDC federation, so this is the one long-lived secret of a deployment. |
 | CircleCI personal token used to register projects and to run the canary | The operator's own vault, never a project the machine identity can read | Same triggers. It is never needed by a pipeline, and a job that could read it would control the CI. |
-| State bucket credentials and Pulumi passphrase | Platform project | Same triggers. Rotating the passphrase re-encrypts the stacks. |
+| Pulumi passphrase | Platform project | Same triggers. Rotating the passphrase re-encrypts the stacks. |
 
 ## The project's contract
 
@@ -175,6 +183,7 @@ Until the script exists, the same steps are done by hand against the APIs. The i
 | Pulumi from the first deployment | DNS ships with the first Worker, databases follow, and the same program will drive AWS. | Wrangler alone, which is Cloudflare-only and imperative for resources. |
 | Wrangler kept for the bundle and the assets | Pulumi can create a Worker, but uploading static assets through it means redoing Wrangler's upload protocol by hand. | Pulumi-only Worker deployment. |
 | No CLI or npm package in projects | A project should not depend on a tool to be deployable. The configuration carries the tooling, at pinned versions. | A published pipeline CLI, as the previous platform had. |
+| The Pulumi program lives in the pipeline file | The job cannot fetch this repository, and a fetched program would not follow a pull request's branch. | A program fetched from a public copy of this repository, or with a read token in the vault. Revisit when the program outgrows the file. |
 | Pinned tools in a cache rather than a platform image | The same determinism, with no registry, no push credential and no digest to bump in a second pull request. | An image built from this repository and pinned by digest. Revisit if the toolchain grows past what an install step handles in seconds. |
 | One pipeline on `main`, no `develop`, no tags | Trunk-based flow with one manual gate. Fewer refs, fewer rules to protect. | Production on tags, which would have let the vault distinguish the two environments by ref, at the cost of a second flow. |
 | Dynamic configuration for the development step | The project decides whether it has a development environment, and CircleCI offers no other way to read a file before choosing jobs. | Forcing a development environment on every project. |
@@ -200,13 +209,15 @@ These are the facts that forced the decisions above. Each names where to look wh
 | Cloudflare offers no OIDC federation for its API. | An API token stays in the vault and is rotated. | Cloudflare API documentation. |
 | Wrangler calls git in the working directory for version metadata, and git runs commands the repository configures, such as hooks or a file system monitor. | After the project user is created, the platform user's git points at no repository, so Wrangler finds none and runs nothing from the checkout. | Wrangler source, the deployment metadata helpers, and git configuration documentation. |
 | Wrangler refuses to upload a version of a Worker that was never deployed, and a version carries no change of routes or domains. | The first production deployment of a Worker goes through a direct deployment, with nothing serving yet. Routes and domains are Pulumi's, never a version's. | Wrangler documentation on versions and gradual deployments. |
+| A Workers custom domain attaches to a Worker that exists. | The job asks Cloudflare whether the Worker exists before the first Pulumi run, and a first deployment runs Pulumi again once the Worker is uploaded. | Cloudflare API documentation, Workers custom domains. |
+| R2's S3 API accepts an API token as credentials: the token's id as access key, its SHA-256 as secret key, with path-style addressing and the automatic region. | Pulumi's state lives in R2 behind its S3 backend with no second credential. The lock is a file, so one deployment at a time per stack. | Cloudflare documentation, R2 S3 API tokens. |
+| A Workers service name is the name of the environment's section of the Wrangler configuration, or the top-level name suffixed with the environment. | The job requires that section, computes the name the same way, and gives it to Pulumi for the domain. | Wrangler documentation, environments. |
 
 ## Open points
 
 Each is validated on the canary repository before it reaches a real project.
 
 - Dynamic configuration when the configuration source is another repository, through the continuation API. It is what lets a project without a development environment reach production straight after the checks. The fallback, a static workflow where the development job halts at once when the project has no development environment, still routes such a project through the approval.
-- Pulumi's S3 backend against R2, with path-style addressing and the automatic region. The lock is a file, so one deployment at a time per stack.
 - The scopes of the Cloudflare API token.
 
 ## Identifiers of the shared resources

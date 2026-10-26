@@ -15,7 +15,7 @@ A change that weakens one is wrong, even when it compiles.
 
 ## Architecture rules
 
-- **Keep the configuration one static file, plus the setup stage that reads `nextnode.toml`.** Every project runs the same workflow. Behavior differs through the pipeline parameters the setup stage produces, never through a second file or a per-project branch of the configuration.
+- **Keep the configuration one static file, plus the setup stage that reads `nextnode.toml`.** Every project runs the same workflow. Behavior differs through the pipeline parameters the setup stage produces, never through a second file or a per-project branch of the configuration. The Pulumi program is part of that file: the deployment job checks out the project, not this repository, and a program fetched from elsewhere could not follow the pull request that changes it.
 - **Pulumi owns every resource it can express. Wrangler only bundles and uploads the Worker.** Resource creation that happens outside Pulumi is invisible to the state and will be fought by the next run. Wrangler is the Cloudflare port of the deployment, and another target gets its own port behind the same job.
 - **Project code runs as the project user, platform tools as the platform user.** A new step that runs anything from the project repository goes through `project-run`. A step that holds a platform credential never runs project code and reads only what the repository committed, which is why the committed Wrangler configuration is restored and named to Wrangler before it runs, and why a build command in it is refused.
 - **A value the project controls never reaches a shell as code.** Values from `nextnode.toml` or from a deployment go through the platform's JSON files and `nn`, never into `BASH_ENV`, an `eval`, or an unquoted expansion. The one exception is the migration command, which is the project's own command run as the project user.
@@ -59,6 +59,6 @@ The docs carry concepts, flows, states, rules and reasons. They never copy what 
 ## Extending
 
 - **A new job** goes into the single workflow with its `requires` chain and, when it needs the vault, the same login and export steps as the deployment job. It is validated on the canary before merge.
-- **A new resource kind** is a Pulumi resource keyed by a `nextnode.toml` entry, with its identifier exposed as a stack output for the Worker bindings. Its failure mode is added to the table on the architecture page.
+- **A new resource kind** is a Pulumi resource keyed by a `nextnode.toml` entry, written in the program the deployment job carries, with its identifier exposed as a stack output for the Worker bindings. Its failure mode is added to the table on the architecture page.
 - **A new deployment target** is a port beside the Wrangler one, behind the same job and the same `nextnode.toml` keys where they apply.
 - **A new project** is registered by the registration script, never by clicking through the three dashboards.
