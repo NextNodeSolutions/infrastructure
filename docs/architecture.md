@@ -97,21 +97,19 @@ sequenceDiagram
     J->>V: login with the identity id and the job token
     V-->>J: vault token that expires within minutes
     J->>V: export the environment's secrets into the step shell
-    J->>F: does the environment's Worker exist yet
-    J->>S: pulumi reads and locks the stack state
-    J->>F: pulumi creates or updates the resources of the environment
     J->>J: install, build and migrate with the tokens removed from the environment
     J->>F: wrangler uploads the bundle and the static assets
+    J->>S: pulumi reads and locks the stack state
+    J->>F: pulumi attaches the domain to the Worker and converges the environment's resources
     J->>F: smoke request on the health route
     alt production and the smoke passes
         J->>F: promote the uploaded version to all traffic
     else production and the smoke fails
         Note over J,F: the previous version keeps serving
     end
-    opt the Worker did not exist before this deployment
-        J->>F: pulumi attaches the custom domain to the new Worker
-    end
 ```
+
+Pulumi runs after the upload and before the smoke request. A custom domain attaches to a Worker that exists, and a domain that serves is never touched before its replacement is uploaded, which is what makes a Worker rename safe: the domain moves to the new Worker only once that Worker is there. A version uploaded for production receives no traffic until the promotion, so attaching the domain to its Worker first changes nothing for the version that serves.
 
 The Pulumi program is part of the pipeline file. The job checks out the project, not this repository, and no claim of the job token names the configuration's ref, so a program fetched from here could not follow the pull request that changes it. In the file, the canary validates the program and the configuration together. The program reads what the job read from `nextnode.toml`, keeps its state in the platform's R2 bucket under the project's name and the environment, and runs as the platform user from a directory of its own, never from the checkout.
 
@@ -134,7 +132,7 @@ Development deploys directly to all traffic. Production uploads a version that r
 | Vault login fails | Nothing deployed. Either the identity binding rejects the ref, or the identity is not a member of the project. The step prints the Infisical error. |
 | Pulumi fails part way | The stack state records what was created. The next run converges, because the program is declarative. The lock is released when the process ends. |
 | A resource was deleted outside Pulumi, by hand or with the Worker it was attached to | The refresh that precedes every update drops it from the state, and the program recreates what it still declares. |
-| The job ends between the upload of a first Worker and the attachment of its domain | The Worker serves on its workers.dev URL only. The next run finds the Worker and attaches the domain before the build. |
+| The job ends between the Worker's upload and the Pulumi step | The Worker serves on its workers.dev URL only, a production version serves nothing. The next run attaches the domain. |
 | Migration fails | Resources are up to date, the previous Worker still serves. The project's migration tool owns the recovery. |
 | Development smoke fails | The development Worker has already been replaced, production is untouched. |
 | Production smoke fails | The new version is uploaded but never promoted. The previous version keeps serving. |
@@ -210,7 +208,7 @@ These are the facts that forced the decisions above. Each names where to look wh
 | Cloudflare offers no OIDC federation for its API. | An API token stays in the vault and is rotated. | Cloudflare API documentation. |
 | Wrangler calls git in the working directory for version metadata, and git runs commands the repository configures, such as hooks or a file system monitor. | After the project user is created, the platform user's git points at no repository, so Wrangler finds none and runs nothing from the checkout. | Wrangler source, the deployment metadata helpers, and git configuration documentation. |
 | Wrangler refuses to upload a version of a Worker that was never deployed, and a version carries no change of routes or domains. | The first production deployment of a Worker goes through a direct deployment, with nothing serving yet. Routes and domains are Pulumi's, never a version's. | Wrangler documentation on versions and gradual deployments. |
-| A Workers custom domain attaches to a Worker that exists. | The job asks Cloudflare whether the Worker exists before the first Pulumi run, and a first deployment runs Pulumi again once the Worker is uploaded. | Cloudflare API documentation, Workers custom domains. |
+| A Workers custom domain attaches to a Worker that exists. | Pulumi runs after Wrangler's upload, so a first deployment is reachable on its domain for the smoke request even without a workers.dev URL. | Cloudflare API documentation, Workers custom domains. |
 | R2's S3 API accepts an API token as credentials: the token's id as access key, its SHA-256 as secret key, with path-style addressing and the automatic region. | Pulumi's state lives in R2 behind its S3 backend with no second credential. The lock is a file, so one deployment at a time per stack. | Cloudflare documentation, R2 S3 API tokens. |
 | A Workers service name is the name of the environment's section of the Wrangler configuration, or the top-level name suffixed with the environment. | The job requires that section, computes the name the same way, and gives it to Pulumi for the domain. | Wrangler documentation, environments. |
 
@@ -220,6 +218,7 @@ Each is validated on the canary repository before it reaches a real project.
 
 - Dynamic configuration when the configuration source is another repository, through the continuation API. It is what lets a project without a development environment reach production straight after the checks. The fallback, a static workflow where the development job halts at once when the project has no development environment, still routes such a project through the approval.
 - The scopes of the Cloudflare API token.
+- Resources the Worker binds to, such as a database, must exist before the upload. They get a Pulumi run before the build that must not touch what the serving Worker holds, which means a stack or a target set of their own.
 
 ## Identifiers of the shared resources
 

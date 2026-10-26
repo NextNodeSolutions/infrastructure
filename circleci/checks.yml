@@ -95,8 +95,12 @@ commands:
               // halts and the workflow goes on.
               process.exit(env === "development" ? 3 : 1);
             }
+            if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(toml.project?.name ?? "")) {
+              console.error("nextnode.toml: project.name must be letters, digits, dots, dashes or underscores: it names the Pulumi project");
+              process.exit(1);
+            }
             const values = {
-              project: toml.project?.name,
+              project: toml.project.name,
               infisical_project: toml.project?.infisical_project,
               entry: toml.deploy?.entry ?? ".",
               health: toml.deploy?.health ?? "/",
@@ -152,33 +156,24 @@ commands:
             echo "$pin" > /tmp/pnpm.txt
   resources:
     description: Converge the environment's Cloudflare resources with Pulumi, from the platform user's own directory, on the state kept in the platform's R2 bucket.
-    parameters:
-      step:
-        type: string
-        default: Resources
-      after_deploy:
-        type: boolean
-        default: false
     steps:
       - run:
-          name: << parameters.step >>
-          # A custom domain attaches to a Worker that exists, so a first deployment runs
-          # this a second time once the Worker is uploaded. Every later deployment finds
-          # its Worker before the build and converges everything in the first run.
+          name: Resources
+          # Runs once the Worker of this deployment is uploaded and before the smoke
+          # request: a custom domain attaches to a Worker that exists, and a domain that
+          # serves is never touched before its replacement is there.
           command: |
-            if << parameters.after_deploy >>; then
-              [ "$(nn worker exists)" = false ] || { echo "The Worker existed before this deployment: its resources were converged before the build."; exit 0; }
-            fi
             set -a; . /tmp/platform.env; set +a
             auth() { printf 'header = "Authorization: Bearer %s"\n' "$CLOUDFLARE_API_TOKEN"; }
             mkdir -p /tmp/pulumi && cd /tmp/pulumi
             ln -sfn ~/.platform/node_modules node_modules
-            printf 'name: %s\nruntime:\n  name: nodejs\n  options:\n    typescript: false\n' "$(nn nextnode project)" > Pulumi.yaml
+            # JSON is YAML: the project name goes through a serializer, never into a template.
+            node -e 'require("node:fs").writeFileSync("Pulumi.yaml", JSON.stringify({ name: require("/tmp/nextnode.json").project, runtime: { name: "nodejs", options: { typescript: false } } }))'
             echo '{ "main": "index.js" }' > package.json
             cat > index.js \<<'JS'
             // The Cloudflare resources of one environment of one project. Inputs: the JSON that
-            // read-toml wrote from nextnode.toml, the platform account, and whether the Worker
-            // exists yet. Resources keyed by nextnode.toml entries are added here.
+            // read-toml wrote from nextnode.toml and the platform account. Resources keyed by
+            // nextnode.toml entries are added here.
             const cloudflare = require("@pulumi/cloudflare");
             const spec = require("/tmp/nextnode.json");
             const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -190,17 +185,13 @@ commands:
               return holding.sort((a, b) => b.name.length - a.name.length)[0];
             });
 
-            // A custom domain attaches to a Worker, so it exists only once the Worker does: the
-            // first deployment runs this program again after uploading the Worker. Without a
-            // Worker there is no domain to keep, so leaving it out of the program is safe.
-            if (process.env.WORKER_EXISTS === "true") {
-              new cloudflare.WorkersCustomDomain("domain", {
-                accountId,
-                zoneId: zone.id,
-                hostname: spec.domain,
-                service: spec.worker_name,
-              });
-            }
+            // The environment's domain, attached to the Worker Wrangler has just uploaded.
+            new cloudflare.WorkersCustomDomain("domain", {
+              accountId,
+              zoneId: zone.id,
+              hostname: spec.domain,
+              service: spec.worker_name,
+            });
 
             exports.domain = spec.domain;
             exports.zone = zone.name;
@@ -212,12 +203,9 @@ commands:
             export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION=auto
             pulumi login "s3://$NEXTNODE_STATE_BUCKET?endpoint=$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com&region=auto&s3ForcePathStyle=true" > /dev/null
             pulumi stack select --create "$NEXTNODE_ENVIRONMENT"
-            code=$(curl -s -o /dev/null -w '%{http_code}' -K <(auth) "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/services/$(nn nextnode worker_name)")
-            case $code in 200) exists=true ;; 404) exists=false ;; *) echo "Cloudflare answered $code to the Worker lookup"; exit 1 ;; esac
-            node -e 'require("node:fs").writeFileSync("/tmp/worker.json", JSON.stringify({ exists: process.argv[1] === "true" }))' -- "$exists"
             # Refreshed first: what disappeared outside Pulumi, such as a domain that went with
-            # its Worker, leaves the state instead of failing its own deletion.
-            WORKER_EXISTS=$exists pulumi up --refresh --yes --skip-preview --non-interactive --suppress-progress
+            # a deleted Worker, leaves the state instead of failing its own deletion.
+            pulumi up --refresh --yes --skip-preview --non-interactive --suppress-progress
   isolate-project:
     description: Create the project user, hand it the checkout, and end root access. Sudo then only becomes that user.
     steps:
@@ -325,7 +313,6 @@ jobs:
             echo -n "application: "; export_project "$(nn nextnode infisical_project)" "$NEXTNODE_ENVIRONMENT" | sudo -nu project sh -c 'umask 077; cat > /home/project/app.env'
             # The job token has done its work. Every later step sources this file first.
             { echo 'unset CIRCLE_OIDC_TOKEN CIRCLE_OIDC_TOKEN_V2'; cat "$BASH_ENV"; } > "$BASH_ENV.next" && mv "$BASH_ENV.next" "$BASH_ENV"
-      - resources
       - project-run:
           command: pnpm install --frozen-lockfile
       - save_cache:
@@ -370,6 +357,7 @@ jobs:
             [ -n "$version" ] || { echo "wrangler printed no version id"; exit 1; }
             [ -n "$preview" ] || { echo "wrangler printed no preview URL: the production Worker needs preview_urls"; exit 1; }
             record "$version" "$preview"
+      - resources
       - run:
           name: Smoke
           command: |
@@ -385,9 +373,6 @@ jobs:
             rm -f "$config" && cp "/tmp/wrangler/$config" "$config"
             set -a; . /tmp/platform.env; set +a
             wrangler versions deploy "$version@100%" --config "$config" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" --yes
-      - resources:
-          step: Attach the domain to the new Worker
-          after_deploy: true
 
 workflows:
   pipeline:
