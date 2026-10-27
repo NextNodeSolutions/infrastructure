@@ -1,6 +1,6 @@
-// What the read step extracted from nextnode.toml and the Wrangler configuration for one
-// environment. The read step writes it as JSON in the platform's directory; every later
-// step of the job, and the program, read this file and never the project's files again.
+// What the read step extracted from nextnode.toml for one environment. The read step
+// writes it as JSON in the platform's directory; every later step of the job, and the
+// program, read this file and never the project's files again.
 import { readFileSync } from "node:fs";
 
 export type Spec = {
@@ -8,19 +8,15 @@ export type Spec = {
   readonly project: string;
   /** Environment being deployed, also the stack name. */
   readonly environment: string;
-  /** Directory of the Wrangler configuration, relative to the checkout. */
-  readonly entry: string;
   /** Route the smoke request targets after each upload. */
   readonly health: string;
   /** The project's migration command, empty when it declares none. */
   readonly migrate: string;
   /** Hostname of the environment, attached to its Worker as a custom domain. */
   readonly domain: string;
-  /** File name of the Wrangler configuration at the entry. */
-  readonly wrangler_config: string;
-  /** Name of the Worker Wrangler deploys for the environment. */
+  /** Name of the environment's Worker, the repository's name suffixed with the environment. */
   readonly worker_name: string;
-  /** The bundled entry point, relative to the entry, that the upload takes as it is; empty for a Worker of static assets only. */
+  /** The bundled entry point, relative to the checkout root, that the upload takes as it is; empty for a Worker of static assets only. */
   readonly bundle: string;
 };
 
@@ -44,11 +40,9 @@ export function readSpec(path: string): Spec {
   return {
     project: filled("project"),
     environment: filled("environment"),
-    entry: filled("entry"),
     health: filled("health"),
     migrate: text("migrate"),
     domain: filled("domain"),
-    wrangler_config: filled("wrangler_config"),
     worker_name: filled("worker_name"),
     bundle: text("bundle"),
   };
