@@ -16,13 +16,13 @@
 #
 # Two users share the job. The platform user owns the job: it trades the OIDC
 # token for a vault token inside one step, keeps the platform secrets in a file
-# only it can read, and runs Wrangler on a configuration it generates from the
-# committed nextnode.toml before any project command. The project user runs
-# every project command through `project-run`: install, build, migrations. It
-# receives the application's secrets of the environment being deployed, nothing
-# else, and it cannot read the platform user's files or processes. Root access
-# ends before the first project command; sudo then serves only to become the
-# project user.
+# only it can read, generates Wrangler's configuration from the committed
+# nextnode.toml before any project command, and uploads its own link-free copy
+# of the project's bundle. The project user runs every project command through
+# `project-run`: install, build, migrations, bundle. It receives the
+# application's secrets of the environment being deployed, nothing else, and it
+# cannot read the platform user's files or processes. Root access ends before
+# the first project command; sudo then serves only to become the project user.
 #
 # The Cloudflare resources of an environment are converged by the platform package of
 # this repository, a Pulumi program driven through the Automation API. The job clones
@@ -135,7 +135,7 @@ commands:
             // keys that describe this Worker's own code and runtime are accepted. A key that
             // names, builds or routes the Worker, or binds to or creates another resource, is
             // the platform's, and a key Wrangler adds later stays refused until accepted here.
-            const accepted = new Set(["main", "base_dir", "tsconfig", "compatibility_date", "compatibility_flags", "assets", "vars", "define", "observability", "limits", "placement", "triggers", "workers_dev", "preview_urls", "minify", "keep_names", "upload_source_maps", "version_metadata", "ai", "browser", "images", "durable_objects", "migrations"]);
+            const accepted = new Set(["main", "base_dir", "tsconfig", "compatibility_date", "compatibility_flags", "assets", "vars", "define", "observability", "limits", "placement", "triggers", "workers_dev", "preview_urls", "minify", "keep_names", "version_metadata", "ai", "browser", "images", "durable_objects", "migrations"]);
             const section = sections?.[env] ?? {};
             for (const [scope, keys] of [["", shared], [`env.${env}.`, section]]) {
               for (const key of Object.keys(keys)) if (!accepted.has(key)) fail(`${scope}${key} is refused. The Wrangler keys the platform accepts: ${[...accepted].join(", ")}`);
@@ -323,32 +323,81 @@ jobs:
           step: Migrations
           # sudo drops BASH_ENV, so a project shell has no `nn`: it reads the JSON itself.
           command: migrate=$(node -p "require(\"/home/circleci/platform/nextnode.json\").migrate"); if [ -n "$migrate" ]; then echo "+ $migrate"; eval "$migrate"; else echo "No migrate command in nextnode.toml, nothing to run."; fi
+      - project-run:
+          step: Bundle the Worker
+          # Wrangler bundles as the project user, without any credential, so the bundle holds
+          # only what that user can read. It writes its working files beside the configuration,
+          # hence the copy in the project user's home.
+          command: cp /home/circleci/platform/wrangler.json ~/wrangler.json && cd ~ && /home/circleci/.platform/node_modules/.bin/wrangler deploy --dry-run --outdir bundle --config wrangler.json
       - run:
           name: Deploy
           # Development replaces what serves, and so does a production Worker's first
           # deployment, when nothing serves yet. Every other production deployment is a
           # version without traffic, promoted by a later step. Wrangler runs as the
-          # platform user, from the platform's directory, on the configuration the read
-          # step generated: it bundles and uploads, it does not run project code.
+          # platform user on a copy of the bundle and the assets the platform owns, and
+          # uploads them without bundling: it reads no file the project points it to.
           command: |
+            # No project process outlives this line, so nothing changes the files between
+            # their check and their copy.
+            while sudo -nu project pkill -KILL -u project; do :; done
+            if pgrep -u project > /dev/null; then echo "a project process survived"; exit 1; fi
+            cat > /home/circleci/platform/stage.cjs \<<'JS'
+            const fs = require("node:fs");
+            const path = require("node:path");
+            const fail = (message) => { console.error(message); process.exit(1); };
+            const config = JSON.parse(fs.readFileSync("/home/circleci/platform/wrangler.json", "utf8"));
+            const upload = "/home/circleci/platform/upload";
+            fs.rmSync(upload, { recursive: true, force: true });
+            // A link could name a platform file, so only directories and regular files with a
+            // single link are copied, opened without following one.
+            const copy = (from, to) => {
+              const link = fs.lstatSync(from);
+              if (link.isDirectory()) {
+                fs.mkdirSync(to, { recursive: true });
+                for (const entry of fs.readdirSync(from)) copy(path.join(from, entry), path.join(to, entry));
+                return;
+              }
+              const fd = link.isFile() ? fs.openSync(from, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW) : -1;
+              const stat = fd === -1 ? link : fs.fstatSync(fd);
+              if (!stat.isFile() || stat.nlink !== 1) fail(`${from} is refused: only regular files with a single link are uploaded`);
+              fs.writeFileSync(to, fs.readFileSync(fd));
+              fs.closeSync(fd);
+            };
+            const stage = (root, within, to) => {
+              if (!root.startsWith(`${within}/`) || fs.realpathSync(root) !== root) fail(`${root} is refused: it must lie in ${within}, reached through no link`);
+              copy(root, to);
+            };
+            const worker = `${upload}/worker`;
+            stage("/home/project/bundle", "/home/project", worker);
+            // Only the staged files are named to Wrangler: a source map comment or a TypeScript
+            // configuration would make it read a file the project chose, with the credential.
+            const { tsconfig, ...kept } = config;
+            const staged = { ...kept, main: `${worker}/${path.parse(config.main).name}.js`, base_dir: worker, no_bundle: true, upload_source_maps: false };
+            if (config.assets?.directory) {
+              stage(config.assets.directory, process.cwd(), `${upload}/assets`);
+              staged.assets = { ...config.assets, directory: `${upload}/assets` };
+            }
+            fs.writeFileSync(`${upload}/wrangler.json`, JSON.stringify(staged));
+            JS
+            node /home/circleci/platform/stage.cjs
             cd /home/circleci/platform
             set -a; . ./platform.env; set +a
             workers_dev_url() { grep -oE "https://[a-z0-9.-]+\.workers\.dev" wrangler.log | head -1 || true; }
             record() { node -e 'require("node:fs").writeFileSync("deploy.json", JSON.stringify({ version: process.argv[1], url: process.argv[2] }))' -- "$1" "$2"; }
             direct() {
-              wrangler deploy --config wrangler.json 2>&1 | tee wrangler.log
+              wrangler deploy --config upload/wrangler.json 2>&1 | tee wrangler.log
               # The health check targets the workers.dev URL when there is one, else the declared domain.
               url=$(workers_dev_url)
               record "" "${url:-https://$(nn nextnode domain)}"
             }
             if [ "$NEXTNODE_ENVIRONMENT" = development ]; then direct; exit 0; fi
-            if ! listed=$(wrangler versions list --config wrangler.json 2>&1); then
+            if ! listed=$(wrangler versions list --config upload/wrangler.json 2>&1); then
               # 10007 is Cloudflare's code for a Worker that does not exist. Any other error stops here.
               printf '%s\n' "$listed" | grep -q "code: 10007" || { printf '%s\n' "$listed"; exit 1; }
               echo "First deployment of this Worker: nothing serves yet, deployed directly."
               direct; exit 0
             fi
-            wrangler versions upload --config wrangler.json --message "$CIRCLE_SHA1" 2>&1 | tee wrangler.log
+            wrangler versions upload --config upload/wrangler.json --message "$CIRCLE_SHA1" 2>&1 | tee wrangler.log
             version=$(grep -oE "Worker Version ID: [0-9a-f-]+" wrangler.log | head -1 | cut -d" " -f4 || true)
             preview=$(workers_dev_url)
             [ -n "$version" ] || { echo "wrangler printed no version id"; exit 1; }
@@ -367,7 +416,7 @@ jobs:
             [ -n "$version" ] || { echo "Deployed directly, already serving."; exit 0; }
             cd /home/circleci/platform
             set -a; . ./platform.env; set +a
-            wrangler versions deploy "$version@100%" --config wrangler.json --message "$CIRCLE_SHA1" --yes
+            wrangler versions deploy "$version@100%" --config upload/wrangler.json --message "$CIRCLE_SHA1" --yes
 
 workflows:
   pipeline:
