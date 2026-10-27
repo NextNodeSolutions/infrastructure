@@ -1,5 +1,5 @@
-// What the deployment job read from nextnode.toml and the Wrangler configuration,
-// for one environment. The job writes it as JSON; this is the only input of the program.
+// What the deployment job read from nextnode.toml, for one environment.
+// The job writes it as JSON; this is the only input of the program.
 import { readFileSync } from "node:fs";
 
 export interface Spec {
