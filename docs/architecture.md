@@ -61,7 +61,7 @@ sequenceDiagram
     G->>C: push event through the GitHub App
     C->>I: read the pipeline configuration
     C->>P: clone the project at the pushed ref
-    C->>C: checks
+    C->>C: checks, nextnode.toml of every environment first
     opt ref is main
         C->>C: deploy-dev, which halts at once when the project declares no development environment
         Note over C,P: hold waits for a person to approve in CircleCI
@@ -76,7 +76,7 @@ Rules that the diagram encodes:
 - **The project decides whether it has a development environment.** A development environment with a database has its own cost and lifecycle, so it is not forced on every project. The workflow is static, so the development job starts for every project and halts as soon as it has read `nextnode.toml` when no development environment is declared; such a project still goes through the approval. The intended end state, listed under open points, reads the file before the jobs are chosen and sends a project without a development environment to production straight after the checks.
 - **The approval is the only manual step.** Anyone who can approve in the CircleCI organization can release. Restricting approval to a group is a paid CircleCI feature, so the organization membership is the control.
 
-`checks` installs the pnpm version pinned in the project's `package.json`, installs with a frozen lockfile, then runs the project's lint, format check and type check, and its tests when a `test` script exists. It enforces nothing of its own beyond the pin and the lockfile. The contract with a project is the set of scripts, not their content. Even on a branch, project scripts run as a second user of the job, the same way as in the deployment job.
+`checks` first reads `nextnode.toml` for every environment with the platform package, as the platform user and before any project code, so a file the deployment jobs would refuse fails the pull request instead of `main` or the production job after its approval. It then installs the pnpm version pinned in the project's `package.json`, installs with a frozen lockfile, and runs the project's lint, format check and type check, and its tests when a `test` script exists. It enforces nothing of its own beyond the file, the pin and the lockfile. The contract with a project is the set of scripts, not their content. Even on a branch, project scripts run as a second user of the job, the same way as in the deployment job.
 
 ## The deployment job
 

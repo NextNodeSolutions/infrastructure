@@ -4,7 +4,8 @@
 # CI file: its pipeline definition points here and checks out its own repository.
 # The project supplies nextnode.toml, a pinned packageManager and its scripts.
 #
-#   checks       lint, formatting, types, tests of the project. No context, no secret.
+#   checks       nextnode.toml for every environment, then lint, formatting, types,
+#                tests of the project. No context, no secret.
 #   deploy-dev   on main. Halts right after reading nextnode.toml when the project
 #                declares no development environment.
 #   hold         a person approves the production deployment in CircleCI.
@@ -256,8 +257,14 @@ commands:
 jobs:
   checks:
     executor: node
+    environment:
+      <<: *canary
     steps:
       - checkout
+      - platform-package
+      # The deployment jobs read nextnode.toml only after the merge, and production only
+      # after the approval: every environment is read here, so a mistake fails the branch.
+      - run: node /home/circleci/platform/infrastructure/platform/read.ts --repository "$CIRCLE_PROJECT_REPONAME" --check
       - install-pnpm
       - pnpm-store:
           kind: checks
