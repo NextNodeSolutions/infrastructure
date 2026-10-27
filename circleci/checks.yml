@@ -495,7 +495,10 @@ jobs:
           command: '! cat /home/circleci/platform/platform.env'
       - project-run:
           step: "Probe: the project cannot write where the platform keeps its files or loads code"
-          command: 'for d in /home/circleci /home/circleci/.platform /home/circleci/.platform/pulumi /home/circleci/.platform/pulumi-home /home/circleci/platform /home/circleci/platform/infrastructure /home/circleci/platform/infrastructure/platform/node_modules; do [ -d "$d" ] || { echo "missing: $d"; exit 1; }; if touch "$d/probe" 2> /dev/null; then echo "writable: $d"; exit 1; fi; done'
+          # Every file of the platform's directories, including the pnpm store that the
+          # platform's modules are hard links into when the install ran on a cache miss. Find
+          # fails on the directories the project cannot list, which it cannot write either.
+          command: 'for d in /home/circleci /home/circleci/.platform /home/circleci/.platform/pulumi /home/circleci/.platform/pulumi-home /home/circleci/platform /home/circleci/platform/infrastructure /home/circleci/platform/infrastructure/platform/node_modules; do [ -d "$d" ] || { echo "missing: $d"; exit 1; }; if touch "$d/probe" 2> /dev/null; then echo "writable: $d"; exit 1; fi; done; writable=$(find /home/circleci/platform /home/circleci/.platform -writable -print -quit 2> /dev/null || true); [ -z "$writable" ] || { echo "writable: $writable"; exit 1; }'
       - project-run:
           step: "Probe: the project cannot append to the file every platform step sources"
           command: 'file=$(node -p "require(\"/home/circleci/platform/probe.json\").bash_env"); [ -n "$file" ] && ! sh -c "echo probe >> $file"'
