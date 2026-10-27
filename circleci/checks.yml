@@ -324,7 +324,8 @@ jobs:
           # Wrangler's bundler follows every import of the project's code, so it runs as
           # the project user: what it can read is what the project can read. The upload
           # takes the bundle as it is. A Worker of static assets only has nothing to bundle.
-          command: 'spec=/home/circleci/platform/nextnode.json; entry=$(node -p "require(\"$spec\").entry"); bundle=$(node -p "require(\"$spec\").bundle"); config=$(node -p "require(\"$spec\").wrangler_config"); if [ -z "$bundle" ]; then echo "No entry point in $config: static assets only, nothing to bundle."; exit 0; fi; rm -rf "$entry/${bundle%/*}"; /home/circleci/platform/infrastructure/platform/node_modules/.bin/wrangler deploy --dry-run --outdir "$entry/${bundle%/*}" --config "$entry/$config" --env "$NEXTNODE_ENVIRONMENT" && [ -f "$entry/$bundle" ]'
+          # The output directory is absolute: Wrangler resolves a relative one against the configuration's directory.
+          command: 'spec=/home/circleci/platform/nextnode.json; entry=$(node -p "require(\"$spec\").entry"); bundle=$(node -p "require(\"$spec\").bundle"); config=$(node -p "require(\"$spec\").wrangler_config"); if [ -z "$bundle" ]; then echo "No entry point in $config: static assets only, nothing to bundle."; exit 0; fi; rm -rf "$entry/${bundle%/*}"; /home/circleci/platform/infrastructure/platform/node_modules/.bin/wrangler deploy --dry-run --outdir "$PWD/$entry/${bundle%/*}" --config "$entry/$config" --env "$NEXTNODE_ENVIRONMENT" && ls -l "$entry/${bundle%/*}" && [ -f "$entry/$bundle" ]'
       - project-run:
           step: Migrations
           # The project's own command, run as the project user: the one value of the
