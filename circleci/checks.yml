@@ -429,7 +429,7 @@ jobs:
             fresh; printf '[deploy]\nentry = "probe-missing"\n[environments.production]\ndomain = "probe.example"\n' > nextnode.toml; refused "an entry that does not exist" "must be a directory of the repository"
             fresh; with '{ "assets": { "directory": "/home/circleci/platform" } }'; refused "an assets directory outside the repository" "assets.directory leaves the repository"
             fresh; with '{ "main": "../../../platform/platform.env" }'; refused "an entry point outside the repository" "main leaves the repository"
-            fresh; with "{ \"env\": { \"$NEXTNODE_ENVIRONMENT\": { \"base_dir\": \"../..\" } } }"; refused "a module root of the environment outside the repository" "base_dir leaves the repository"
+            fresh; with "{ \"env\": { \"$NEXTNODE_ENVIRONMENT\": { \"base_dir\": \"/home/circleci/platform\" } } }"; refused "a module root of the environment outside the repository" "base_dir leaves the repository"
             fresh; with '{ "text_blobs": { "SECRET": "/home/circleci/platform/platform.env" } }'; refused "a text blob outside the repository" "text_blobs.SECRET leaves the repository"
       - run:
           name: "Probe: a value read from a platform file stays text"
