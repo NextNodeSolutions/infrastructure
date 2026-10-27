@@ -25,7 +25,7 @@ stateDiagram-v2
 4. A request on the health route decides. Development serves at once. Production is uploaded as a version without traffic, checked on its preview URL, and promoted only when the check passes. The first deployment of a production Worker is the exception: nothing served before, so it serves at once and the check follows.
 5. Development is deployed first when the project declares one, then a person approves in CircleCI, then production.
 
-[docs/architecture.md](docs/architecture.md) explains each part, the secrets model, what a failure leaves behind, and every decision with its reason. [docs/configuration.md](docs/configuration.md) is the contract a project fulfils: the keys of `nextnode.toml`, what its Wrangler configuration may and may not contain, and the scripts the pipeline calls.
+[docs/architecture.md](docs/architecture.md) explains each part, the secrets model, what a failure leaves behind, and every decision with its reason. [docs/configuration.md](docs/configuration.md) is the contract a project fulfils: the keys of `nextnode.toml`, which Wrangler keys it may carry, and the scripts the pipeline calls.
 
 ## Onboarding a project
 

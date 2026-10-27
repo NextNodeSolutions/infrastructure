@@ -5,16 +5,16 @@ This page lists what a project repository supplies to the pipeline and how a mis
 ```mermaid
 flowchart LR
     T[nextnode.toml] --> R[Read step of the deployment job]
-    W[Wrangler configuration at the entry] --> R
     R --> S[Spec of the environment, a JSON file of the platform user]
+    R --> G[Generated Wrangler configuration, a JSON file of the platform user]
     S --> M[Migration command, run as the project user]
-    S --> U[Wrangler upload of the environment's section]
+    G --> U[Wrangler upload of the environment's Worker]
     S --> P[Platform package, the domain and the resources]
     S --> H[Smoke request on the health route]
     K[package.json scripts and packageManager] --> C[Checks job and the build]
 ```
 
-The read step runs once per deployment job, before any project code. It reads `nextnode.toml` and the committed Wrangler configuration, refuses what the platform cannot accept, and writes one spec for the environment. Every later step reads that spec, never the files again, so a project script that rewrites them during the build changes nothing.
+The read step runs once per deployment job, before any project code. It reads `nextnode.toml`, refuses what the platform cannot accept, and writes two files: the spec of the environment and the Wrangler configuration of its Worker. Every later step reads those files, never `nextnode.toml` again, so a project script that rewrites it during the build changes nothing.
 
 ## nextnode.toml
 
@@ -22,9 +22,8 @@ The file lives at the repository root and holds names only, never a secret value
 
 | Key | Role | When absent |
 | --- | --- | --- |
-| `project.name` | Names the project everywhere the platform keeps state for it, including the Pulumi project. A letter or digit, then letters, digits, dots, dashes or underscores, a hundred characters at most. | Refused. |
+| `project.name` | Names the project everywhere the platform keeps state for it, including the Pulumi project, and names the Worker of each environment `<project.name>-<environment>`. Lowercase letters, digits and dashes, short enough for that Worker name to stay within Cloudflare's 63 characters. | Refused. |
 | `project.infisical_project` | Identifier of the Infisical project that holds the application's secrets, one environment per deployment environment. | Refused. |
-| `deploy.entry` | Directory that holds the Wrangler configuration, relative to the root. | The root. |
 | `deploy.health` | Route the pipeline requests after each upload. It must answer with a success status on a fresh deployment, even against an empty database. | The root route. |
 | `deploy.migrate` | Command that applies the project's migrations, run as the project user after the build with the application's secrets in its environment. The platform never guesses a migration tool. | No migration step. |
 | `environments.development.domain` | Hostname of the development environment, attached to its Worker as a custom domain. The zone must belong to the platform's Cloudflare account. | Refused when the section exists. When the whole `environments.development` section is absent, the project has no development environment: the development job halts and the pipeline waits for the approval. |
@@ -32,16 +31,31 @@ The file lives at the repository root and holds names only, never a secret value
 
 The presence of `environments.development` is the project's choice. A development environment with a database has its own cost and lifecycle, so the platform does not force one.
 
-## The Wrangler configuration
+## The Wrangler keys
 
-Wrangler runs as the platform user with the Cloudflare credential, on the configuration the repository committed. The read step keeps that copy aside before any project command runs, and the deployment restores it, so a build cannot alter what Wrangler reads. Four rules follow, each checked by the read step.
+`nextnode.toml` is also the Worker's Wrangler configuration. Every top-level key outside `project`, `deploy` and `environments` is Wrangler's own, with Wrangler's meaning: `main`, `assets`, `compatibility_date`, `vars`, an `env.<environment>` section for what differs per environment. A project keeps no other Wrangler file. Paths are relative to the repository root, where the file lives.
 
-- **Exactly one configuration file at the entry**, in JSON, JSONC or TOML. Two files would leave Wrangler to choose.
-- **A section per deployment environment**, under `env`. Wrangler deploys that section, and the Worker is named after it, or after the top-level name suffixed with the environment when the section gives no name. The platform attaches the domain to that Worker, so it needs the name to be the one Wrangler uses.
-- **No build command.** The configuration is read with the platform credential, and a build command in it would run project code with that credential. The build is the project's `build` script, run as the project user.
-- **No route and no custom domain.** Domains come from `nextnode.toml` and are attached by the platform package after each upload. A route declared to Wrangler would be fought over by every deployment.
+```mermaid
+flowchart LR
+    T[nextnode.toml at the root] --> L[On a laptop: Wrangler, Vite or Astro, pointed at nextnode.toml]
+    L --> D[Local Worker with simulated bindings, no credential]
+    L --> Y[Worker types from wrangler types]
+    T --> R[In the deployment job: the read step]
+    R --> X[Refused keys stop the job before any project code]
+    R --> G[Generated configuration: the Wrangler keys, the Worker name, paths anchored to the checkout]
+    G --> W[Wrangler deploys, as the platform user, from the platform's directory]
+```
 
-A production Worker keeps preview URLs enabled. The pipeline checks a production version on its preview URL before promoting it, and fails the deployment when the upload yields none.
+Locally, the tools take the file by path: `wrangler dev --config nextnode.toml`, `wrangler types --config nextnode.toml`, or the `configPath` option of the Cloudflare Vite plugin and of the Astro adapter. Wrangler warns about the three NextNode tables it does not know and reads the rest. Types are generated by Wrangler itself, so a project installs no NextNode package to get them.
+
+In the deployment job, Wrangler runs with the platform's Cloudflare credential, so it never reads the file from the checkout. The read step generates its configuration from the committed file before any project command runs, into the platform user's directory, and Wrangler runs from there. The step refuses, at the top level and in the environment's section:
+
+- **`name` and `account_id`.** The Worker of an environment is named `<project.name>-<environment>`, and the platform deploys to its own account. The platform package attaches the domain to that name, so it must be the one Wrangler uses.
+- **`build` and `containers`.** Both make Wrangler run project code with the credential. The build is the project's `build` script, run as the project user.
+- **`route` and `routes`.** Domains come from `nextnode.toml` and are attached by the platform package after each upload. A route declared to Wrangler would be fought over by every deployment.
+- **Bindings to resources the platform package does not manage**, such as databases, key-value namespaces, buckets and queues. Wrangler creates a missing one on its own, outside Pulumi's state, which the next run would fight.
+
+The other environment sections are left out of the generated configuration. A production Worker keeps preview URLs enabled. The pipeline checks a production version on its preview URL before promoting it, and fails the deployment when the upload yields none.
 
 ## The package manifest
 
@@ -59,11 +73,11 @@ The install is frozen: a lockfile that does not match the manifest fails the fir
 
 ## How a mistake is reported
 
-A refusal of `nextnode.toml` or of the Wrangler configuration happens in the read step, with a message that names the key or the rule, before any secret is fetched and before any project code runs. The other mistakes show in the step that meets them.
+A refusal of `nextnode.toml`, its NextNode keys or its Wrangler keys, happens in the read step, with a message that names the key or the rule, before any secret is fetched and before any project code runs. The other mistakes show in the step that meets them.
 
 | Mistake | Where it shows |
 | --- | --- |
-| A missing or malformed key of `nextnode.toml`, a Wrangler configuration that breaks a rule above | The read step of the deployment job, which prints the key or the rule. The checks job does not read these files, so the error appears on `main` only. |
+| A missing or malformed key of `nextnode.toml`, a refused Wrangler key | The read step of the deployment job, which prints the key or the rule. The checks job does not read the file, so the error appears on `main` only. |
 | An unpinned or malformed `packageManager` | The install step of the checks job, on the first push. |
 | A lockfile out of date | The project's install step, on the first push. On `main`, the deployment job fails at the same step, before the build. |
 | A domain whose zone is not in the platform's account | The resources step of the deployment job, from the platform package, after the upload: the Worker serves on its workers.dev URL and the domain is not attached. |

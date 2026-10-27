@@ -42,7 +42,7 @@ Each boundary carries a contract.
 
 | Boundary | Contract |
 | --- | --- |
-| Project repository to CircleCI | A push on any branch starts a pipeline. The project is cloned at the pushed ref. The project supplies what [configuration.md](configuration.md) lists: `nextnode.toml`, a Wrangler configuration, a pinned `packageManager` and a few scripts. |
+| Project repository to CircleCI | A push on any branch starts a pipeline. The project is cloned at the pushed ref. The project supplies what [configuration.md](configuration.md) lists: `nextnode.toml`, which also carries the Worker's Wrangler keys, a pinned `packageManager` and a few scripts. |
 | This repository to CircleCI | The pipeline definition of every project reads its configuration file from `main` of this repository. CircleCI's GitHub App integration allows the configuration source and the checkout source to be different repositories. A merge here is a release to every project. |
 | CircleCI to Infisical | Each job receives an OIDC token whose subject names the CircleCI organization, the project, the user who caused the run, the repository and the git ref. Infisical accepts it for one machine identity, bound to the organization and to the `main` ref of the organization's repositories, and returns a vault token that expires within minutes. |
 | Job to the platform package | Pulumi owns every Cloudflare resource it can express. The package's program receives what the job read from `nextnode.toml`, keeps its state in an R2 bucket of the platform account, one stack per project and environment, and returns the identifiers the Worker needs as stack outputs. |
@@ -90,6 +90,7 @@ sequenceDiagram
     participant V as Infisical
     participant S as State bucket in R2
     participant F as Cloudflare API
+    J->>J: read nextnode.toml, write the spec and the Wrangler configuration, before any project code
     O-->>J: job token whose subject ends with the git ref
     J->>V: login with the identity id and the job token
     V-->>J: vault token that expires within minutes
@@ -114,8 +115,8 @@ The rules that keep the secrets where they belong.
 
 - **The vault token never leaves the step that obtained it.** Login and export happen in one shell. Nothing is written to the file CircleCI sources before each step.
 - **Project code never sees the job token, nor the platform's credentials.** Project commands run as a second user, in a process that replaced the step shell without the OIDC variables. The variables are removed from every later step once the vault step has ended, the platform's secrets live in a file only the platform user reads, and root access ends before the first project command. A dependency with a lifecycle script, even one that leaves a process behind, finds neither token in its environment, in a file it may read, or in a process it may inspect.
-- **Wrangler is the platform's, not the project's.** It runs as the platform user with the Cloudflare credential, on the Wrangler configuration the repository committed: the job keeps that copy aside before any project command runs, restores it and names it to Wrangler before deploying. A build command in that configuration is refused when the job reads it, because the build is the project's build script, run as the project user.
-- **Routes and domains belong to Pulumi.** The environment's domain is the one `nextnode.toml` declares, attached as a custom domain to the Worker that Wrangler deploys for that environment. A route or domain in the Wrangler configuration is refused when the job reads it, because every deployment would otherwise fight over it.
+- **Wrangler is the platform's, not the project's.** It runs as the platform user with the Cloudflare credential, on a configuration the read step generates from the committed `nextnode.toml` before any project command runs, kept in the platform user's directory and run from there, so nothing the build writes in the checkout is read as configuration. A key that would make Wrangler run project code, such as a build command, is refused when the job reads it, because the build is the project's build script, run as the project user.
+- **Routes and domains belong to Pulumi.** The environment's domain is the one `nextnode.toml` declares, attached as a custom domain to the Worker that Wrangler deploys for that environment. A route among the Wrangler keys of `nextnode.toml` is refused when the job reads it, because every deployment would otherwise fight over it.
 - **Nothing the project controls is evaluated by a shell.** The values of `nextnode.toml` and the results of a deployment travel between steps as JSON files owned by the platform user, never as lines of a sourced shell file.
 - **The platform writes only where the project cannot.** Once the project user exists, every file the platform writes and later reads or loads, from the deployment record to the Pulumi program and its packages, lives in a directory of the platform user's home that the project user cannot write, and a program directory is recreated empty before use. A file created in a shared place after project code ran could be the project's.
 - **The platform package runs with the platform's credentials, from the platform's clone.** It is the only code besides this file that runs with the Cloudflare token, and it comes from this repository, at a ref a project cannot choose.
@@ -161,7 +162,7 @@ Durable credentials and their rotation:
 
 ## The project's contract
 
-`nextnode.toml`, the committed Wrangler configuration and a few package scripts are all a project supplies. [configuration.md](configuration.md) lists the keys, the rules the read step enforces on the Wrangler configuration, and where each mistake is reported. The file never holds a secret value, and the presence of a development environment in it is what gives the project a development deployment.
+`nextnode.toml` and a few package scripts are all a project supplies. The file is also the Worker's Wrangler configuration, which Wrangler, Vite and Astro read as is on a laptop, so a project maintains one deployment file and installs no NextNode package. [configuration.md](configuration.md) lists the keys, the Wrangler keys the read step refuses, and where each mistake is reported. The file never holds a secret value, and the presence of a development environment in it is what gives the project a development deployment.
 
 ## Registering a repository
 
@@ -181,6 +182,7 @@ Until the script exists, the same steps are done by hand against the APIs. The i
 | Pulumi from the first deployment | DNS ships with the first Worker, databases follow, and the same program will drive AWS. | Wrangler alone, which is Cloudflare-only and imperative for resources. |
 | Wrangler kept for the bundle and the assets | Pulumi can create a Worker, but uploading static assets through it means redoing Wrangler's upload protocol by hand. | Pulumi-only Worker deployment. |
 | No CLI or npm package in projects | A project should not depend on a tool to be deployable. The configuration carries the tooling, at pinned versions. | A published pipeline CLI, as the previous platform had. |
+| `nextnode.toml` carries the Worker's Wrangler keys | One deployment file to maintain. Wrangler, Vite and Astro read it natively, and `wrangler types` gives the Worker's types, so no generator ships to projects. The job still generates what Wrangler reads with the credential. | A committed Wrangler file beside `nextnode.toml`, which declared the Worker twice. A NextNode package that generated the Wrangler file and the types, as the previous platform's worker types did. |
 | The Pulumi program is a package driven through the Automation API | Pulumi's own answer for tooling built over it: the program is a function, the driver is code, and both are checked with the package's own tooling. | The program written into the pipeline file, which validated with the configuration but put a growing program in a YAML string. |
 | The package is cloned from this repository at a pipeline parameter | The job checks out the project, not this repository, and no claim of the job token names the configuration's ref. A parameter that only an API trigger can set gives the canary the pull request's program and gives every project `main`. | A published package, which would need a release before every canary run. |
 | Pinned tools in a cache rather than a platform image | The same determinism, with no registry, no push credential and no digest to bump in a second pull request. | An image built from this repository and pinned by digest. Revisit if the toolchain grows past what an install step handles in seconds. |
@@ -211,7 +213,10 @@ These are the facts that forced the decisions above. Each names where to look wh
 | Wrangler refuses to upload a version of a Worker that was never deployed, and a version carries no change of routes or domains. | The first production deployment of a Worker goes through a direct deployment, with nothing serving yet. Routes and domains are Pulumi's, never a version's. | Wrangler documentation on versions and gradual deployments. |
 | A Workers custom domain attaches to a Worker that exists. | Pulumi runs after Wrangler's upload, so a first deployment is reachable on its domain for the smoke request even without a workers.dev URL. | Cloudflare API documentation, Workers custom domains. |
 | R2's S3 API accepts an API token as credentials: the token's id as access key, its SHA-256 as secret key, with path-style addressing and the automatic region. | Pulumi's state lives in R2 behind its S3 backend with no second credential. The lock is a file, so one deployment at a time per stack. | Cloudflare documentation, R2 S3 API tokens. |
-| A Workers service name is the name of the environment's section of the Wrangler configuration, or the top-level name suffixed with the environment. | The job requires that section, computes the name the same way, and gives it to Pulumi for the domain. | Wrangler documentation, environments. |
+| A Workers service name is the name of the environment's section of the Wrangler configuration. | The read step writes `<project.name>-<environment>` into that section and gives the same name to Pulumi for the domain. | Wrangler documentation, environments. |
+| Wrangler reads any configuration file named with `--config`, in TOML by its extension, and only warns about top-level keys it does not know. | `nextnode.toml` is the Wrangler configuration on a laptop, and Wrangler generates the Worker's types from it. | Wrangler documentation, configuration; the warning on a local run. |
+| Wrangler resolves the paths of a configuration file against the file's directory. | The generated configuration lives outside the checkout, so the read step anchors its paths to the checkout root, where `nextnode.toml` is. | Wrangler documentation, configuration. |
+| Wrangler 4 creates a database, a key-value namespace or a bucket on deployment when a binding names none. | Such bindings are refused until the platform package creates their kind and hands the identifiers to the generated configuration. | Wrangler documentation, automatic resource provisioning. |
 
 ## Open points
 

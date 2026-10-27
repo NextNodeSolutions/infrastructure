@@ -16,8 +16,8 @@
 #
 # Two users share the job. The platform user owns the job: it trades the OIDC
 # token for a vault token inside one step, keeps the platform secrets in a file
-# only it can read, and runs Wrangler on the configuration the repository
-# committed. The project user runs every project command through `project-run`:
+# only it can read, and runs Wrangler on a configuration it generates from the
+# committed nextnode.toml before any project command. The project user runs every project command through `project-run`:
 # install, build, migrations. It receives the application's secrets of the
 # environment being deployed, nothing else, and it cannot read the platform
 # user's files or processes. Root access ends before the first project command;
@@ -58,7 +58,7 @@ commands:
           # plugin, released with their SDKs under one version: they are pinned at the versions
           # the platform package pins, and the driver refuses to run on a drift.
           command: |
-            echo "@infisical/cli@0.44.9 wrangler@4.152.0 smol-toml@1.9.1 jsonc-parser@3.3.1" > /tmp/tools.txt
+            echo "@infisical/cli@0.44.9 wrangler@4.152.0 smol-toml@1.9.1" > /tmp/tools.txt
             echo "pulumi@3.272.0 cloudflare@6.23.1" >> /tmp/tools.txt
       - restore_cache:
           keys:
@@ -99,61 +99,76 @@ commands:
           command: |
             # The platform's own directory: the project user, in the platform's group, reads
             # it and writes nothing in it. Secret files in it are further restricted.
-            mkdir -m 750 -p /home/circleci/platform /home/circleci/platform/wrangler
+            mkdir -m 750 -p /home/circleci/platform
             cat > /tmp/read-toml.cjs \<<'JS'
             const { parse } = require(process.env.HOME + "/.platform/node_modules/smol-toml");
-            const jsonc = require(process.env.HOME + "/.platform/node_modules/jsonc-parser");
             const fs = require("node:fs");
             const path = require("node:path");
             const toml = parse(fs.readFileSync("nextnode.toml", "utf8"));
             const env = process.env.NEXTNODE_ENVIRONMENT;
+            const fail = (message) => { console.error(`nextnode.toml: ${message}`); process.exit(1); };
             if (!toml.environments?.[env]) {
               console.error(`nextnode.toml declares no environment "${env}"`);
               // A missing development environment is a choice, not an error: the job
               // halts and the workflow goes on.
               process.exit(env === "development" ? 3 : 1);
             }
-            if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(toml.project?.name ?? "")) {
-              console.error("nextnode.toml: project.name must be letters, digits, dots, dashes or underscores: it names the Pulumi project");
-              process.exit(1);
+            const name = toml.project?.name ?? "";
+            if (!/^[a-z0-9][a-z0-9-]*$/.test(name) || `${name}-${env}`.length > 63) {
+              fail("project.name must be lowercase letters, digits and dashes: it names the Pulumi project and, suffixed with the environment, the Worker, 63 characters at most");
             }
             const values = {
-              project: toml.project.name,
+              project: name,
               environment: env,
               infisical_project: toml.project?.infisical_project,
-              entry: toml.deploy?.entry ?? ".",
               health: toml.deploy?.health ?? "/",
               migrate: toml.deploy?.migrate ?? "",
               domain: toml.environments[env].domain,
+              worker_name: `${name}-${env}`,
             };
-            // Wrangler later reads its configuration with the platform credential, so the
-            // copy the repository committed is kept aside, named explicitly to Wrangler, and
-            // restored before it runs. A build command in it would run project code with
-            // that credential, so it is refused: the build is the project's build script.
-            const configs = fs.readdirSync(values.entry).filter((f) => /^wrangler\.(jsonc?|toml)$/.test(f));
-            if (configs.length !== 1) { console.error(`expected one Wrangler configuration in ${values.entry}, found ${configs.length}`); process.exit(1); }
-            values.wrangler_config = configs[0];
-            const text = fs.readFileSync(path.join(values.entry, configs[0]), "utf8");
-            const wrangler = configs[0].endsWith(".toml") ? parse(text) : jsonc.parse(text, [], { allowTrailingComma: true });
-            if (wrangler.build?.command || wrangler.env?.[env]?.build?.command) {
-              console.error(`${configs[0]} declares a build command: the platform runs the project's build script instead`);
-              process.exit(1);
+            // Every other key of the file is Wrangler's own, so that Wrangler, Vite and Astro
+            // read the same file locally. Wrangler later reads the configuration generated
+            // here with the platform credential, so what would run project code with it, or
+            // create or route what Pulumi owns, is refused.
+            const platformKeys = new Set(["project", "deploy", "environments", "env"]);
+            const shared = Object.fromEntries(Object.entries(toml).filter(([key]) => !platformKeys.has(key)));
+            const section = toml.env?.[env] ?? {};
+            const routed = "domains come from nextnode.toml, through Pulumi";
+            const unmanaged = "the platform package does not create this resource kind yet, and Wrangler would create it outside Pulumi's state";
+            const refused = {
+              name: "the platform names the Worker after project.name and the environment",
+              account_id: "the platform deploys to its own account",
+              build: "a build command would run project code with the platform credential: the build is the project's build script",
+              containers: "Wrangler would build the image, running project code with the platform credential",
+              route: routed,
+              routes: routed,
+              d1_databases: unmanaged,
+              kv_namespaces: unmanaged,
+              r2_buckets: unmanaged,
+              queues: unmanaged,
+              hyperdrive: unmanaged,
+              vectorize: unmanaged,
+            };
+            for (const [scope, keys] of [["", shared], [`env.${env}.`, section]]) {
+              for (const key of Object.keys(keys)) if (Object.hasOwn(refused, key)) fail(`${scope}${key} is refused: ${refused[key]}`);
             }
-            // Routes and domains are Pulumi's: a route in the Wrangler configuration would be
-            // fought over by every deployment.
-            for (const scope of [wrangler, wrangler.env?.[env] ?? {}]) {
-              if (scope.routes || scope.route) { console.error(`${configs[0]} declares routes: domains come from nextnode.toml, through Pulumi`); process.exit(1); }
-            }
-            // Wrangler deploys the environment's section of its configuration, under the name
-            // that section gives or the top-level name suffixed with the environment.
-            if (!wrangler.env?.[env]) { console.error(`${configs[0]} declares no env.${env}: the platform deploys that section`); process.exit(1); }
-            values.worker_name = wrangler.env[env].name ?? `${wrangler.name}-${env}`;
+            // The generated file lives in the platform's directory, where Wrangler runs, so the
+            // paths it resolves against its own location are anchored to the checkout.
+            const root = process.cwd();
+            const anchored = (scope) => {
+              const out = { ...scope };
+              for (const key of ["main", "base_dir", "tsconfig"]) if (typeof out[key] === "string") out[key] = path.resolve(root, out[key]);
+              if (typeof out.assets?.directory === "string") out.assets = { ...out.assets, directory: path.resolve(root, out.assets.directory) };
+              return out;
+            };
+            const wrangler = { ...anchored(shared), name: values.worker_name, env: { [env]: { ...anchored(section), name: values.worker_name } } };
             for (const [key, value] of Object.entries(values)) {
-              if (value === undefined) { console.error(`nextnode.toml: missing ${key}`); process.exit(1); }
+              if (value === undefined) fail(`missing ${key}`);
               console.log(`${key}=${value}`);
             }
+            console.log(`wrangler configuration: ${JSON.stringify(wrangler)}`);
             fs.writeFileSync("/home/circleci/platform/nextnode.json", JSON.stringify(values));
-            fs.copyFileSync(path.join(values.entry, configs[0]), path.join("/home/circleci/platform/wrangler", configs[0]));
+            fs.writeFileSync("/home/circleci/platform/wrangler.json", JSON.stringify(wrangler));
             JS
             node /tmp/read-toml.cjs && status=0 || status=$?
             if [ "$status" = 3 ]; then circleci-agent step halt; exit 0; fi
@@ -326,12 +341,11 @@ jobs:
           # Development replaces what serves, and so does a production Worker's first
           # deployment, when nothing serves yet. Every other production deployment is a
           # version without traffic, promoted by a later step. Wrangler runs as the
-          # platform user on the committed configuration: it bundles and uploads, it
-          # does not run project code.
+          # platform user, from the platform's directory, on the configuration the read
+          # step generated: it bundles and uploads, it does not run project code.
           command: |
-            cd "$(nn nextnode entry)"
-            config=$(nn nextnode wrangler_config)
-            rm -f "$config" && cp "/home/circleci/platform/wrangler/$config" "$config"
+            cd /home/circleci/platform
+            config=wrangler.json
             set -a; . /home/circleci/platform/platform.env; set +a
             workers_dev_url() { grep -oE "https://[a-z0-9.-]+\.workers\.dev" /home/circleci/platform/wrangler.log | head -1 || true; }
             record() { node -e 'require("node:fs").writeFileSync("/home/circleci/platform/deploy.json", JSON.stringify({ version: process.argv[1], url: process.argv[2] }))' -- "$1" "$2"; }
@@ -365,9 +379,8 @@ jobs:
           command: |
             version=$(nn deploy version)
             [ -n "$version" ] || { echo "Deployed directly, already serving."; exit 0; }
-            cd "$(nn nextnode entry)"
-            config=$(nn nextnode wrangler_config)
-            rm -f "$config" && cp "/home/circleci/platform/wrangler/$config" "$config"
+            cd /home/circleci/platform
+            config=wrangler.json
             set -a; . /home/circleci/platform/platform.env; set +a
             wrangler versions deploy "$version@100%" --config "$config" --env "$NEXTNODE_ENVIRONMENT" --message "$CIRCLE_SHA1" --yes
 
