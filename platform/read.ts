@@ -1,33 +1,62 @@
-// Reads nextnode.toml and the committed Wrangler configuration of one environment into the
-// spec, and keeps a copy of that configuration aside for Wrangler.
+// Reads nextnode.toml for one environment into the spec, and generates from its Wrangler
+// keys the Wrangler configuration of the environment's Worker.
 //
 //   node read.ts --repository <name> --environment <name> --platform <directory>
 //
 // Runs in the project checkout as the platform user, before any project code. The
 // repository's name, as CircleCI checked it out, names the project everywhere the
-// platform keeps state for it: a value of the project's files never does. A refusal
-// names the key or the rule and exits 1. Exit 3 means the environment is not declared,
-// which the development job turns into a halt: a missing development environment is the
-// project's choice, not an error.
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { basename, extname, isAbsolute, join, resolve } from "node:path";
+// platform keeps state for it, and names its Workers: a value of the project's files
+// never does. A refusal names the key or the rule and exits 1. Exit 3 means the
+// environment is not declared, which the development job turns into a halt: a missing
+// development environment is the project's choice, not an error.
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, extname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import jsonc from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
 import { within } from "./src/paths.ts";
 import { isRecord, type Spec } from "./src/spec.ts";
 
 const NOT_DECLARED = 3;
 const ROOT = realpathSync(".");
-// The repository name becomes the Pulumi project name, which Pulumi restricts to this shape.
-const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
-const WRANGLER_CONFIG = /^wrangler\.(jsonc?|toml)$/;
-// The keys Wrangler reads as a file or a directory, relative to its configuration. The
-// upload reads them with the platform credential, so they stay inside the repository.
-// Rules are globs evaluated under base_dir and need no check of their own.
-const PATH_KEYS = ["main", "tsconfig", "base_dir"];
-const PATH_TABLES = ["text_blobs", "data_blobs", "wasm_modules"];
-// Where Wrangler writes the bundle, relative to the entry, and the name it gives it.
+// The repository name names the Pulumi project and, suffixed with the environment, the
+// Worker, which Cloudflare restricts to lowercase letters, digits and dashes.
+const WORKER_NAME = /^[a-z0-9][a-z0-9-]*$/;
+const WORKER_NAME_LENGTH = 63;
+// The tables of nextnode.toml that are the platform's, and the environments' sections.
+const PLATFORM_TABLES = ["deploy", "environments", "env"];
+// Every other key of nextnode.toml is Wrangler's own. Wrangler
+// reads the generated configuration with the platform credential, in the account every
+// project shares, so only keys that describe this Worker's own code and runtime are
+// accepted. A key that names, builds or routes the Worker, or binds to or creates another
+// resource, is the platform's, and a key Wrangler adds later stays refused until accepted here.
+const ACCEPTED = new Set([
+  "main",
+  "base_dir",
+  "tsconfig",
+  "compatibility_date",
+  "compatibility_flags",
+  "assets",
+  "vars",
+  "define",
+  "observability",
+  "limits",
+  "placement",
+  "triggers",
+  "workers_dev",
+  "preview_urls",
+  "minify",
+  "keep_names",
+  "version_metadata",
+  "ai",
+  "browser",
+  "images",
+  "durable_objects",
+  "migrations",
+]);
+// The keys Wrangler reads as a file or a directory. The generated configuration lives
+// outside the checkout, so they are anchored to the checkout root, and stay inside it.
+const PATH_KEYS = ["main", "base_dir", "tsconfig"];
+// Where the project user's bundle lands, relative to the checkout root.
 const BUNDLE_DIRECTORY = ".nextnode";
 
 const { values: args } = parseArgs({
@@ -52,28 +81,32 @@ function text(record: Record<string, unknown>, key: string, fallback: string | u
   return value;
 }
 
-function workerName(wrangler: unknown, section: Record<string, unknown>, file: string): string {
-  // Wrangler names the Worker after the environment's section, or after the top-level
-  // name suffixed with the environment.
-  if (typeof section.name === "string") return section.name;
-  const top = isRecord(wrangler) ? wrangler.name : undefined;
-  if (typeof top !== "string") return refuse(`${file} declares no name for env.${environment} and no top-level name`);
-  return `${top}-${environment}`;
-}
-
-function paths(scope: Record<string, unknown>): [string, unknown][] {
-  return [
-    ...PATH_KEYS.map((key): [string, unknown] => [key, scope[key]]),
-    ["assets.directory", table(scope, "assets").directory],
-    ["site.bucket", table(scope, "site").bucket],
-    ...PATH_TABLES.flatMap((key) => Object.entries(table(scope, key)).map(([name, value]): [string, unknown] => [`${key}.${name}`, value])),
-  ];
-}
-
-function insideRepository(scope: Record<string, unknown>, entry: string, file: string): void {
-  for (const [key, value] of paths(scope)) {
-    if (typeof value === "string" && !within(ROOT, resolve(entry, value))) refuse(`${file}: ${key} leaves the repository: ${value}`);
+function checkKeys(scope: string, keys: Record<string, unknown>): void {
+  for (const key of Object.keys(keys)) {
+    if (!ACCEPTED.has(key)) refuse(`nextnode.toml: ${scope}${key} is refused. The Wrangler keys the platform accepts: ${[...ACCEPTED].join(", ")}`);
   }
+  if (Object.keys(table(keys, "triggers")).some((key) => key !== "crons")) refuse(`nextnode.toml: ${scope}triggers accepts crons only`);
+  const bindings = table(keys, "durable_objects").bindings;
+  if (Array.isArray(bindings) && bindings.some((binding) => isRecord(binding) && binding.script_name !== undefined)) {
+    refuse(`nextnode.toml: ${scope}durable_objects binds to this Worker's own classes only, script_name is refused`);
+  }
+}
+
+// A path the configuration names, as an absolute path of the checkout.
+function anchored(key: string, value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const path = resolve(ROOT, value);
+  if (!within(ROOT, path)) refuse(`nextnode.toml: ${key} leaves the repository: ${value}`);
+  return path;
+}
+
+// The one environment, flat: Wrangler does not carry vars and bindings from the top level
+// into an environment's section, so each key of the section replaces the top-level one, whole.
+function wranglerConfig(keys: Record<string, unknown>, worker: string): Record<string, unknown> {
+  const config: Record<string, unknown> = { ...keys, name: worker };
+  for (const key of PATH_KEYS) config[key] = anchored(key, config[key]);
+  if (isRecord(config.assets)) config.assets = { ...config.assets, directory: anchored("assets.directory", config.assets.directory) };
+  return config;
 }
 
 // The upload takes the bundle Wrangler wrote for the project, named after the entry point.
@@ -81,58 +114,33 @@ function bundleOf(main: unknown): string {
   return typeof main === "string" ? join(BUNDLE_DIRECTORY, `${basename(main, extname(main))}.js`) : "";
 }
 
-function readWrangler(entry: string): Pick<Spec, "wrangler_config" | "worker_name" | "bundle"> {
-  const configs = readdirSync(entry).filter((name) => WRANGLER_CONFIG.test(name));
-  const file = configs[0];
-  if (file === undefined || configs.length !== 1) refuse(`expected one Wrangler configuration in ${entry}, found ${configs.length}`);
-  const source = readFileSync(join(entry, file), "utf8");
-  const wrangler: unknown = file.endsWith(".toml") ? parseToml(source) : jsonc.parse(source, [], { allowTrailingComma: true });
-  // Wrangler deploys the environment's section of its configuration, so the section must exist.
-  const section = table(wrangler, "env")[environment];
-  if (!isRecord(section)) refuse(`${file} declares no env.${environment}: the platform deploys that section`);
-  const top = table({ top: wrangler }, "top");
-  for (const scope of [top, section]) {
-    insideRepository(scope, entry, file);
-    // A build command would run project code with the platform credential: the build is
-    // the project's build script, run as the project user.
-    if (table(scope, "build").command) refuse(`${file} declares a build command: the platform runs the project's build script instead`);
-    // Routes and domains are Pulumi's: a route here would be fought over by every deployment.
-    if (scope.routes || scope.route) refuse(`${file} declares routes: domains come from nextnode.toml, through Pulumi`);
-  }
-  return { wrangler_config: file, worker_name: workerName(wrangler, section, file), bundle: bundleOf(section.main ?? top.main) };
-}
-
-const toml: unknown = parseToml(readFileSync("nextnode.toml", "utf8"));
+const toml = parseToml(readFileSync("nextnode.toml", "utf8"));
+const shared = Object.fromEntries(Object.entries(toml).filter(([key]) => !PLATFORM_TABLES.includes(key)));
 if (!isRecord(table(toml, "environments")[environment])) {
   console.error(`nextnode.toml declares no environment "${environment}"`);
   process.exit(environment === "development" ? NOT_DECLARED : 1);
 }
-if (!PROJECT_NAME.test(args.repository)) refuse(`the repository name ${JSON.stringify(args.repository)} cannot name a Pulumi project: a letter or digit, then letters, digits, dots, dashes or underscores, 100 characters at most`);
-const deploy = table(toml, "deploy");
-const entry = text(deploy, "entry", ".");
-// The entry is a directory of the checkout: the platform reads and copies nothing outside it.
-function entryDirectory(path: string): string {
-  try {
-    return statSync(path).isDirectory() ? realpathSync(path) : "";
-  } catch {
-    return "";
-  }
+const worker = `${args.repository}-${environment}`;
+if (!WORKER_NAME.test(args.repository) || worker.length > WORKER_NAME_LENGTH) {
+  refuse(`the repository name ${JSON.stringify(args.repository)} names the Pulumi project and the Worker ${worker}: lowercase letters, digits and dashes, ${WORKER_NAME_LENGTH} characters at most with the environment`);
 }
-if (isAbsolute(entry) || entry.split(/[\\/]/).includes("..") || !within(ROOT, entryDirectory(entry) || "/")) {
-  refuse(`nextnode.toml: deploy.entry must be a directory of the repository, relative to its root: ${entry}`);
-}
-if (deploy.migrate !== undefined && typeof deploy.migrate !== "string") refuse("nextnode.toml: deploy.migrate must be a string, the command to run");
+const section = table(table(toml, "env"), environment);
+checkKeys("", shared);
+checkKeys(`env.${environment}.`, section);
+const wrangler = wranglerConfig({ ...shared, ...section }, worker);
+const settings = table(toml, "deploy");
+if (settings.migrate !== undefined && typeof settings.migrate !== "string") refuse("nextnode.toml: deploy.migrate must be a string, the command to run");
 const spec: Spec = {
   project: args.repository,
   environment,
-  entry,
-  health: text(deploy, "health", "/"),
-  migrate: deploy.migrate ?? "",
+  health: text(settings, "health", "/"),
+  migrate: settings.migrate ?? "",
   domain: text(table(table(toml, "environments"), environment), "domain", undefined),
-  ...readWrangler(entry),
+  worker_name: worker,
+  bundle: bundleOf(wrangler.main),
 };
 
 for (const [key, value] of Object.entries(spec)) console.log(`${key}=${value}`);
-mkdirSync(join(args.platform, "wrangler"), { recursive: true });
+console.log(`wrangler configuration: ${JSON.stringify(wrangler)}`);
 writeFileSync(join(args.platform, "nextnode.json"), JSON.stringify(spec));
-copyFileSync(join(entry, spec.wrangler_config), join(args.platform, "wrangler", spec.wrangler_config));
+writeFileSync(join(args.platform, "wrangler.json"), JSON.stringify(wrangler));

@@ -5,24 +5,23 @@ This page lists what a project repository supplies to the pipeline and how a mis
 ```mermaid
 flowchart LR
     T[nextnode.toml] --> R[Read step of the deployment job]
-    W[Wrangler configuration at the entry] --> R
     R --> S[Spec of the environment, a JSON file of the platform user]
+    R --> G[Generated Wrangler configuration, a JSON file of the platform user]
     S --> M[Migration command, run as the project user]
-    S --> U[Wrangler upload of the environment's section]
+    G --> U[Wrangler upload of the environment's Worker]
     S --> P[Platform package, the domain and the resources]
     S --> H[Smoke request on the health route]
     K[package.json scripts and packageManager] --> C[Checks job and the build]
 ```
 
-The read step runs once per deployment job, before any project code. It reads `nextnode.toml` and the committed Wrangler configuration, refuses what the platform cannot accept, and writes one spec for the environment. Every later step reads that spec, never the files again, so a project script that rewrites them during the build changes nothing.
+The read step runs once per deployment job, before any project code. It reads `nextnode.toml`, refuses what the platform cannot accept, and writes two files: the spec of the environment and the Wrangler configuration of its Worker. Every later step reads those files, never `nextnode.toml` again, so a project script that rewrites it during the build changes nothing.
 
 ## nextnode.toml
 
-The file lives at the repository root and holds names only, never a secret value. It does not name the project: the repository's name, as CircleCI checked it out, names the Pulumi project that holds the project's state and the Infisical project that holds its secrets. A value of the file could name another project's, so none does. The repository name must be one Pulumi accepts as a project name: a letter or digit, then letters, digits, dots, dashes or underscores, a hundred characters at most.
+The file lives at the repository root and holds names only, never a secret value. It does not name the project: the repository's name, as CircleCI checked it out, names the Pulumi project that holds the project's state and the Infisical project that holds its secrets. A value of the file could name another project's, so none does. The repository name also names the Worker of each environment, `<repository>-<environment>`, so it is made of lowercase letters, digits and dashes, short enough for that Worker name to stay within Cloudflare's limit.
 
 | Key | Role | When absent |
 | --- | --- | --- |
-| `deploy.entry` | Directory that holds the Wrangler configuration, relative to the root and inside the repository. | The root. |
 | `deploy.health` | Route the pipeline requests after each upload. It must answer with a success status on a fresh deployment, even against an empty database. | The root route. |
 | `deploy.migrate` | Command that applies the project's migrations, run as the project user after the build with the application's secrets in its environment. The platform never guesses a migration tool. | No migration step. |
 | `environments.development.domain` | Hostname of the development environment, attached to its Worker as a custom domain. The zone must belong to the platform's Cloudflare account. | Refused when the section exists. When the whole `environments.development` section is absent, the project has no development environment: the development job halts and the pipeline waits for the approval. |
@@ -30,16 +29,33 @@ The file lives at the repository root and holds names only, never a secret value
 
 The presence of `environments.development` is the project's choice. A development environment with a database has its own cost and lifecycle, so the platform does not force one.
 
-## The Wrangler configuration
+## The Wrangler keys
 
-Wrangler runs as the platform user with the Cloudflare credential, on the configuration the repository committed. The read step keeps that copy aside before any project command runs, and the deployment restores it, so a build cannot alter what Wrangler reads. Four rules follow, each checked by the read step.
+`nextnode.toml` is also the Worker's Wrangler configuration. Every top-level key outside `deploy` and `environments` is Wrangler's own, with Wrangler's meaning: `main`, `assets`, `compatibility_date`, `vars`, an `env.<environment>` section for what differs per environment. A project keeps no other Wrangler file. Paths are relative to the repository root, where the file lives.
 
-- **Exactly one configuration file at the entry**, in JSON, JSONC or TOML. Two files would leave Wrangler to choose.
-- **A section per deployment environment**, under `env`, and a name for the Worker. Wrangler deploys that section, and the Worker is named after it, or after the top-level name suffixed with the environment when the section gives no name. The platform attaches the domain to that Worker, so it needs the name to be the one Wrangler uses, and refuses a configuration that names nothing.
-- **No build command.** The configuration is read with the platform credential, and a build command in it would run project code with that credential. The build is the project's `build` script, run as the project user.
-- **No route and no custom domain.** Domains come from `nextnode.toml` and are attached by the platform package after each upload. A route declared to Wrangler would be fought over by every deployment.
-- **Every path stays inside the repository.** The entry point, the TypeScript configuration, the module root, the assets directory, the Workers Sites bucket and the files of text, data and Wasm blobs resolve from the entry to somewhere under the repository's root, and no link of the checkout, after the build, leads outside it, whether its target exists at that moment or not. The upload reads these as the platform user, so a path or a link that reaches out of the checkout would upload a file of the platform. Module rules are globs evaluated under the module root and need no check of their own.
-- **The bundle is the project's.** After the build, Wrangler bundles the entry point as the project user, with the project's configuration, and the upload takes the result as it is, without bundling. An import of the project's code reaches what the project can read and nothing else. A Worker of static assets only has no entry point and no bundle.
+```mermaid
+flowchart LR
+    T[nextnode.toml at the root] --> L[On a laptop: Wrangler, Vite or Astro, pointed at nextnode.toml]
+    L --> D[Local Worker with simulated bindings, no credential]
+    L --> Y[Worker types from wrangler types]
+```
+
+Locally, the tools take the file by path: `wrangler dev --config nextnode.toml`, `wrangler types --config nextnode.toml`, or the `configPath` option of the Cloudflare Vite plugin and of the Astro adapter. Wrangler warns about the NextNode tables it does not know and reads the rest. Types are generated by Wrangler itself.
+
+In the deployment job, the file is never handed to Wrangler. The read step generates Wrangler's configuration from the committed file before any project command runs, into the platform user's directory, and the build cannot change it. That configuration holds the environment alone: each key of `env.<environment>` replaces the top-level key of the same name, whole, so a `vars` table in the section replaces the top-level one.
+
+The step accepts only the keys that describe the Worker's own code and runtime, at the top level and in the environment's section: the entry point and how it is compiled, the compatibility settings, the static assets, `vars` and `define`, cron triggers, Durable Objects of the Worker's own classes, the AI, browser and images bindings, observability, limits, placement and the preview URL switches. A refusal prints the accepted keys. Every other key is refused, for one of these reasons:
+
+- **It names the Worker, the project or the account**, such as `name`, `project` and `account_id`. The repository names all three, and the platform package attaches the domain to the Worker by that name, so it must be the one Wrangler uses.
+- **It runs project code with the credential**, such as `build` and `containers`. The build is the project's `build` script, run as the project user.
+- **It routes traffic or mail to the Worker**, such as `routes` and `addresses`. Domains come from `nextnode.toml` and are attached by the platform package after each upload. A route declared to Wrangler would be fought over by every deployment.
+- **It binds to or creates another resource**, such as a database, a namespace, a bucket, a queue, a workflow, another Worker or another Worker's Durable Objects. Wrangler creates a missing resource on its own, outside Pulumi's state, and every project deploys into the same account, so a binding by name could reach another project's resource.
+- **Wrangler added it after the platform last reviewed its keys.** A new key stays refused until the platform knows what it does with the credential.
+
+Two rules hold for what the accepted keys reach:
+
+- **Every path stays inside the repository.** The entry point, the TypeScript configuration, the module root and the assets directory resolve from the root to somewhere under it, and the bundle and the assets directory hold no link, hard link or pipe after the build: the platform copies them for the upload and refuses each. The upload reads with the platform credential, so a path or a link that reaches out of the checkout would upload a file of the platform. Module rules are globs evaluated under the module root and need no check of their own.
+- **The bundle is the project's.** After the build, Wrangler bundles the entry point as the project user, with the generated configuration, and the upload takes a copy of the result as it is, without bundling and without source maps. An import of the project's code reaches what the project can read and nothing else. A Worker of static assets only has no entry point and no bundle.
 
 A production Worker keeps preview URLs enabled. The pipeline checks a production version on its preview URL before promoting it, and fails the deployment when the upload yields none.
 
@@ -63,12 +79,12 @@ Every script runs as a user of its own, in an environment built from a list rath
 
 ## How a mistake is reported
 
-A refusal of `nextnode.toml` or of the Wrangler configuration happens in the read step, with a message that names the key or the rule, before any secret is fetched and before any project code runs. The other mistakes show in the step that meets them.
+A refusal of `nextnode.toml`, its NextNode keys or its Wrangler keys, happens in the read step, with a message that names the key or the rule, before any secret is fetched and before any project code runs. The other mistakes show in the step that meets them.
 
 | Mistake | Where it shows |
 | --- | --- |
-| A missing or malformed key of `nextnode.toml`, a Wrangler configuration that breaks a rule above, a repository name Pulumi refuses | The read step of the deployment job, which prints the key or the rule. The checks job does not read these files, so the error appears on `main` only. |
-| A link of the checkout that leads outside it, left by the build or committed, dangling or not | The seal step of the deployment job, after the build and before the upload, which names each link. |
+| A missing or malformed key of `nextnode.toml`, a refused Wrangler key, a path outside the repository, a repository name that cannot name a Worker | The read step of the deployment job, which prints the key or the rule. The checks job does not read the file, so the error appears on `main` only. |
+| A link, a hard link or a pipe in the bundle or the assets, left by the build or committed | The copy step of the deployment job, after the build and before the upload, which names the file. |
 | An entry point the bundler cannot resolve | The bundle step of the deployment job, run as the project user, with Wrangler's own message. |
 | No Infisical project named after the repository, or two | The secrets step of the deployment job, before any project code runs. |
 | An unpinned or malformed `packageManager` | The install step of the checks job, on the first push. |
