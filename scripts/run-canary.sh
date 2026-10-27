@@ -37,7 +37,8 @@ for _ in $(seq 1 240); do
     request=$(api "$CC/workflow/$id/job" | json 'j.items.find(x=>x.type==="approval")?.approval_request_id')
     [ -n "$request" ] && api -o /dev/null -X POST "$CC/workflow/$id/approve/$request" && approved=1 && echo "approved the hold" && { sleep 5; continue; }
   fi
-  case "$status" in success|failed|error|canceled|on_hold) break;; esac
+  # An approved hold reads as on_hold for a few more polls.
+  case "$status" in success|failed|error|canceled) break;; on_hold) [ -n "$approved" ] || break;; esac
   if [ -z "$status" ]; then
     errors=$(api "$CC/pipeline/$pipeline" | json 'j.errors?.map(e=>e.type+" "+e.message).join(" | ")')
     [ -z "$errors" ] || { echo "pipeline error: $errors" | redact; exit 1; }

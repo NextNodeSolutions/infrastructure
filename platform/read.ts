@@ -9,11 +9,12 @@
 // names the key or the rule and exits 1. Exit 3 means the environment is not declared,
 // which the development job turns into a halt: a missing development environment is the
 // project's choice, not an error.
-import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import jsonc from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
+import { within } from "./src/paths.ts";
 import { isRecord, type Spec } from "./src/spec.ts";
 
 const NOT_DECLARED = 3;
@@ -21,6 +22,13 @@ const ROOT = realpathSync(".");
 // The repository name becomes the Pulumi project name, which Pulumi restricts to this shape.
 const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const WRANGLER_CONFIG = /^wrangler\.(jsonc?|toml)$/;
+// The keys Wrangler reads as a file or a directory, relative to its configuration. The
+// upload reads them with the platform credential, so they stay inside the repository.
+// Rules are globs evaluated under base_dir and need no check of their own.
+const PATH_KEYS = ["main", "tsconfig", "base_dir"];
+const PATH_TABLES = ["text_blobs", "data_blobs", "wasm_modules"];
+// Where Wrangler writes the bundle, relative to the entry, and the name it gives it.
+const BUNDLE_DIRECTORY = ".nextnode";
 
 const { values: args } = parseArgs({
   options: { repository: { type: "string" }, environment: { type: "string" }, platform: { type: "string" } },
@@ -53,38 +61,45 @@ function workerName(wrangler: unknown, section: Record<string, unknown>, file: s
   return `${top}-${environment}`;
 }
 
-// Every string of the configuration that Wrangler would take as a path, such as the
-// entry point or the assets directory, must stay inside the repository: Wrangler reads
-// and uploads it as the platform user. A string that is no path resolves inside anyway.
-function insideRepository(value: unknown, entry: string, file: string): void {
-  if (typeof value === "string") {
-    const target = resolve(entry, value);
-    if (target !== ROOT && !target.startsWith(ROOT + sep)) refuse(`${file} names a path outside the repository: ${value}`);
-  } else if (Array.isArray(value)) {
-    for (const item of value) insideRepository(item, entry, file);
-  } else if (isRecord(value)) {
-    for (const item of Object.values(value)) insideRepository(item, entry, file);
+function paths(scope: Record<string, unknown>): [string, unknown][] {
+  return [
+    ...PATH_KEYS.map((key): [string, unknown] => [key, scope[key]]),
+    ["assets.directory", table(scope, "assets").directory],
+    ["site.bucket", table(scope, "site").bucket],
+    ...PATH_TABLES.flatMap((key) => Object.entries(table(scope, key)).map(([name, value]): [string, unknown] => [`${key}.${name}`, value])),
+  ];
+}
+
+function insideRepository(scope: Record<string, unknown>, entry: string, file: string): void {
+  for (const [key, value] of paths(scope)) {
+    if (typeof value === "string" && !within(ROOT, resolve(entry, value))) refuse(`${file}: ${key} leaves the repository: ${value}`);
   }
 }
 
-function readWrangler(entry: string): Pick<Spec, "wrangler_config" | "worker_name"> {
+// The upload takes the bundle Wrangler wrote for the project, named after the entry point.
+function bundleOf(main: unknown): string {
+  return typeof main === "string" ? join(BUNDLE_DIRECTORY, `${basename(main, extname(main))}.js`) : "";
+}
+
+function readWrangler(entry: string): Pick<Spec, "wrangler_config" | "worker_name" | "bundle"> {
   const configs = readdirSync(entry).filter((name) => WRANGLER_CONFIG.test(name));
   const file = configs[0];
   if (file === undefined || configs.length !== 1) refuse(`expected one Wrangler configuration in ${entry}, found ${configs.length}`);
   const source = readFileSync(join(entry, file), "utf8");
   const wrangler: unknown = file.endsWith(".toml") ? parseToml(source) : jsonc.parse(source, [], { allowTrailingComma: true });
-  insideRepository(wrangler, entry, file);
   // Wrangler deploys the environment's section of its configuration, so the section must exist.
   const section = table(wrangler, "env")[environment];
   if (!isRecord(section)) refuse(`${file} declares no env.${environment}: the platform deploys that section`);
-  for (const scope of [table({ top: wrangler }, "top"), section]) {
+  const top = table({ top: wrangler }, "top");
+  for (const scope of [top, section]) {
+    insideRepository(scope, entry, file);
     // A build command would run project code with the platform credential: the build is
     // the project's build script, run as the project user.
     if (table(scope, "build").command) refuse(`${file} declares a build command: the platform runs the project's build script instead`);
     // Routes and domains are Pulumi's: a route here would be fought over by every deployment.
     if (scope.routes || scope.route) refuse(`${file} declares routes: domains come from nextnode.toml, through Pulumi`);
   }
-  return { wrangler_config: file, worker_name: workerName(wrangler, section, file) };
+  return { wrangler_config: file, worker_name: workerName(wrangler, section, file), bundle: bundleOf(section.main ?? top.main) };
 }
 
 const toml: unknown = parseToml(readFileSync("nextnode.toml", "utf8"));
@@ -96,8 +111,15 @@ if (!PROJECT_NAME.test(args.repository)) refuse(`the repository name ${JSON.stri
 const deploy = table(toml, "deploy");
 const entry = text(deploy, "entry", ".");
 // The entry is a directory of the checkout: the platform reads and copies nothing outside it.
-if (isAbsolute(entry) || entry.split(/[\\/]/).includes("..") || !(realpathSync(entry) === ROOT || realpathSync(entry).startsWith(ROOT + sep))) {
-  refuse("nextnode.toml: deploy.entry must be a directory of the repository, relative to its root");
+function entryDirectory(path: string): string {
+  try {
+    return statSync(path).isDirectory() ? realpathSync(path) : "";
+  } catch {
+    return "";
+  }
+}
+if (isAbsolute(entry) || entry.split(/[\\/]/).includes("..") || !within(ROOT, entryDirectory(entry) || "/")) {
+  refuse(`nextnode.toml: deploy.entry must be a directory of the repository, relative to its root: ${entry}`);
 }
 if (deploy.migrate !== undefined && typeof deploy.migrate !== "string") refuse("nextnode.toml: deploy.migrate must be a string, the command to run");
 const spec: Spec = {

@@ -197,6 +197,9 @@ commands:
           name: Create the project user and end root access
           command: |
             sudo useradd --create-home --gid circleci --shell /bin/bash project
+            # A hard link to a file of the platform would be a plain file of the checkout. The
+            # kernel refuses one to a file the user cannot read only with this setting.
+            [ "$(cat /proc/sys/fs/protected_hardlinks)" = 1 ] || { echo "fs.protected_hardlinks is off: the project could hard-link the platform's files"; exit 1; }
             sudo chmod -R g+w .
             # The pnpm store is the platform user's, restored from the cache; the project user adds to it.
             mkdir -p ~/.pnpm-store && chmod -R g+ws ~/.pnpm-store
@@ -316,6 +319,12 @@ jobs:
       - project-run:
           command: pnpm build
       - project-run:
+          step: Bundle the Worker
+          # Wrangler's bundler follows every import of the project's code, so it runs as
+          # the project user: what it can read is what the project can read. The upload
+          # takes the bundle as it is. A Worker of static assets only has nothing to bundle.
+          command: 'spec=/home/circleci/platform/nextnode.json; entry=$(node -p "require(\"$spec\").entry"); bundle=$(node -p "require(\"$spec\").bundle"); config=$(node -p "require(\"$spec\").wrangler_config"); if [ -z "$bundle" ]; then echo "No entry point in $config: static assets only, nothing to bundle."; exit 0; fi; rm -rf "$entry/${bundle%/*}"; /home/circleci/platform/infrastructure/platform/node_modules/.bin/wrangler deploy --dry-run --outdir "$entry/${bundle%/*}" --config "$entry/$config" --env "$NEXTNODE_ENVIRONMENT" && [ -f "$entry/$bundle" ]'
+      - project-run:
           step: Migrations
           # The project's own command, run as the project user: the one value of the
           # project a shell evaluates. The project's shell has no `nn`, it reads the JSON itself.
@@ -331,18 +340,21 @@ jobs:
           # Development replaces what serves, and so does a production Worker's first
           # deployment, when nothing serves yet. Every other production deployment is a
           # version without traffic, promoted by a later step. Wrangler runs as the
-          # platform user on the committed configuration: it bundles and uploads, it
-          # does not run project code. What it did is read from its structured output.
+          # platform user on the committed configuration and uploads the bundle the
+          # project user built, without bundling: it reads the configuration's paths and
+          # the sealed checkout, never an import. What it did is read from its structured output.
           command: |
             rm -f /home/circleci/platform/wrangler.ndjson
+            bundle=$(nn nextnode bundle); script=()
+            [ -z "$bundle" ] || script=(--no-bundle ~/project/"$(nn nextnode entry)/$bundle")
             if [ "$NEXTNODE_ENVIRONMENT" = development ]; then
-              platform_wrangler deploy
+              platform_wrangler deploy "${script[@]}"
             elif listed=$(platform_wrangler versions list 2>&1); then
-              platform_wrangler versions upload --message "$CIRCLE_SHA1"
+              platform_wrangler versions upload --message "$CIRCLE_SHA1" "${script[@]}"
             elif printf '%s\n' "$listed" | grep -q "code: 10007"; then
               # 10007 is Cloudflare's code for a Worker that does not exist. Any other error stops here.
               echo "First deployment of this Worker: nothing serves yet, deployed directly."
-              platform_wrangler deploy
+              platform_wrangler deploy "${script[@]}"
             else
               printf '%s\n' "$listed"; exit 1
             fi
@@ -414,8 +426,11 @@ jobs:
             fresh; with "{ \"env\": { \"$NEXTNODE_ENVIRONMENT\": { \"route\": \"probe.example/*\" } } }"; refused "a route of the environment" "declares routes"
             fresh; with "{ \"name\": null, \"env\": { \"$NEXTNODE_ENVIRONMENT\": { \"name\": null } } }"; refused "a Worker without a name" "declares no name"
             fresh; printf '[deploy]\nentry = "../%s"\n[environments.production]\ndomain = "probe.example"\n' "$entry" > nextnode.toml; refused "an entry outside the repository" "must be a directory of the repository"
-            fresh; with '{ "assets": { "directory": "/home/circleci/platform" } }'; refused "an assets directory outside the repository" "names a path outside the repository"
-            fresh; with '{ "main": "../../../platform/platform.env" }'; refused "an entry point outside the repository" "names a path outside the repository"
+            fresh; printf '[deploy]\nentry = "probe-missing"\n[environments.production]\ndomain = "probe.example"\n' > nextnode.toml; refused "an entry that does not exist" "must be a directory of the repository"
+            fresh; with '{ "assets": { "directory": "/home/circleci/platform" } }'; refused "an assets directory outside the repository" "assets.directory leaves the repository"
+            fresh; with '{ "main": "../../../platform/platform.env" }'; refused "an entry point outside the repository" "main leaves the repository"
+            fresh; with "{ \"env\": { \"$NEXTNODE_ENVIRONMENT\": { \"base_dir\": \"../..\" } } }"; refused "a module root of the environment outside the repository" "base_dir leaves the repository"
+            fresh; with '{ "text_blobs": { "SECRET": "/home/circleci/platform/platform.env" } }'; refused "a text blob outside the repository" "text_blobs.SECRET leaves the repository"
       - run:
           name: "Probe: a value read from a platform file stays text"
           command: |
@@ -489,15 +504,35 @@ jobs:
           name: "Probe: the platform ended it, with every other process of the project"
           command: '! pgrep -u project'
       - project-run:
-          step: "Probe: the project links a file of the platform, and one of its own process, into the checkout"
-          command: 'entry=$(node -p "require(\"/home/circleci/platform/nextnode.json\").entry"); ln -s /home/circleci/platform/platform.env "$entry/probe-secret" && ln -s /proc/self/environ "$entry/probe-environ" && ln -s ../package.json "$entry/probe-inside"'
+          step: "Probe: the project cannot hard-link a file of the platform into the checkout"
+          command: 'entry=$(node -p "require(\"/home/circleci/platform/nextnode.json\").entry"); if ln /home/circleci/platform/platform.env "$entry/probe-hard" 2> /dev/null; then echo "hard-linked the platform secrets into the checkout"; exit 1; fi; [ ! -e "$entry/probe-hard" ]'
+      - project-run:
+          step: "Probe: the project links a file of the platform, one of its own process, a file the platform writes later, and one of its own, into the checkout"
+          # probe-later dangles now: its target is a file the deployment writes before Wrangler reads the checkout.
+          command: 'entry=$(node -p "require(\"/home/circleci/platform/nextnode.json\").entry"); ln -s /home/circleci/platform/platform.env "$entry/probe-secret" && ln -s /proc/self/environ "$entry/probe-environ" && ln -s /home/circleci/platform/wrangler.ndjson "$entry/probe-later" && ln -s . "$entry/probe-inside"'
       - run:
-          name: "Probe: the seal refuses the links that leave the checkout, and names them"
+          name: "Probe: the seal refuses the three links that leave the checkout, names them, and keeps the fourth"
           command: |
             if out=$(node /home/circleci/platform/infrastructure/platform/sealed.ts --root ~/project 2>&1); then echo "accepted a checkout with links outside it"; exit 1; fi
-            printf '%s\n' "$out" | grep -q probe-secret && printf '%s\n' "$out" | grep -q probe-environ && ! printf '%s\n' "$out" | grep -q probe-inside
-            entry=$(nn nextnode entry); rm ~/project/"$entry"/probe-secret ~/project/"$entry"/probe-environ
+            for link in probe-secret probe-environ probe-later; do printf '%s\n' "$out" | grep -q "$link" || { echo "not named: $link"; printf '%s\n' "$out"; exit 1; }; done
+            ! printf '%s\n' "$out" | grep -q probe-inside
+            entry=$(nn nextnode entry); rm ~/project/"$entry"/probe-secret ~/project/"$entry"/probe-environ ~/project/"$entry"/probe-later
             node /home/circleci/platform/infrastructure/platform/sealed.ts --root ~/project
+      - run:
+          name: "Probe: the upload takes the bundle as it is, so an import of a platform file reaches nothing"
+          # The bundle is the project's: its entry point imports the platform's secrets and
+          # the committed configuration asks for such files as text modules. The positive
+          # control bundles it the way the platform never does, and the secret is in the output.
+          command: |
+            entry=$(nn nextnode entry); config=$(nn nextnode wrangler_config)
+            work=$(mktemp -d) && cp -r ~/project/. "$work"
+            node -e 'const fs = require("node:fs"), jsonc = require("/home/circleci/platform/infrastructure/platform/node_modules/jsonc-parser"); const file = process.argv[1]; const config = jsonc.parse(fs.readFileSync(file, "utf8"), [], { allowTrailingComma: true }); config.find_additional_modules = true; config.rules = [{ type: "Text", globs: ["**/*.env"] }]; fs.writeFileSync(file, JSON.stringify(config))' "$work/$entry/$config"
+            mkdir -p "$work/$entry/.nextnode"
+            printf 'import leak from "/home/circleci/platform/platform.env";\nexport default { fetch() { return new Response(leak); } };\n' > "$work/$entry/.nextnode/index.js"
+            upload() { ( cd /home/circleci/platform && set -a && . /home/circleci/platform/platform.env && set +a && wrangler deploy --dry-run "$@" --config "$work/$entry/$config" --env "$NEXTNODE_ENVIRONMENT" --env-file /home/circleci/platform/empty.env "$work/$entry/.nextnode/index.js" > /dev/null 2>&1 ); }
+            upload --outdir "$work/control" && grep -rq "PLATFORM_PROBE=platform" "$work/control" || { echo "the positive control did not bundle the platform file: the probe would prove nothing"; exit 1; }
+            upload --no-bundle --outdir "$work/upload"
+            if grep -rq "PLATFORM_PROBE=platform" "$work/upload"; then echo "the upload carries the platform's secrets"; exit 1; fi
       - project-run:
           step: "Probe: the project replaces the Wrangler configuration after the platform read it"
           command: 'entry=$(node -p "require(\"/home/circleci/platform/nextnode.json\").entry"); config=$(node -p "require(\"/home/circleci/platform/nextnode.json\").wrangler_config"); echo "{ \"build\": { \"command\": \"true\" } }" > "$entry/$config.project" && mv "$entry/$config" "$entry/$config.committed" && ln -s "$config.project" "$entry/$config"'

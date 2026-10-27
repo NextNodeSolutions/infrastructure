@@ -1,2 +1,0 @@
-{"type":"deploy","version":1,"version_id":"v1","targets":["https://canary.user.workers.dev","https://canary.nextnode.fr"]}
-{"type":"version-upload","version_id":"v2","preview_url":"https://abc-canary.user.workers.dev"}

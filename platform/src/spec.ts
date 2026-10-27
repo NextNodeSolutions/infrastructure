@@ -20,6 +20,8 @@ export type Spec = {
   readonly wrangler_config: string;
   /** Name of the Worker Wrangler deploys for the environment. */
   readonly worker_name: string;
+  /** The bundled entry point, relative to the entry, that the upload takes as it is; empty for a Worker of static assets only. */
+  readonly bundle: string;
 };
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -48,5 +50,6 @@ export function readSpec(path: string): Spec {
     domain: filled("domain"),
     wrangler_config: filled("wrangler_config"),
     worker_name: filled("worker_name"),
+    bundle: text("bundle"),
   };
 }
