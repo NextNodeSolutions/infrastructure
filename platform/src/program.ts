@@ -13,14 +13,14 @@ export async function program(spec: Spec, accountId: string): Promise<Record<str
   });
 
   // The environment's domain, attached to the Worker Wrangler has just uploaded. The
-  // driver runs after that upload, so the Worker exists and a domain that was serving
-  // moves to its replacement only once the replacement is there.
-  new cloudflare.WorkersCustomDomain("domain", {
-    accountId,
-    zoneId: zone.id,
-    hostname: spec.domain,
-    service: spec.worker_name,
-  });
+  // driver runs after that upload, so the Worker exists before the domain names it.
+  // A hostname holds one custom domain and a new service replaces the resource, so the
+  // old attachment is deleted first.
+  new cloudflare.WorkersCustomDomain(
+    "domain",
+    { accountId, zoneId: zone.id, hostname: spec.domain, service: spec.worker_name },
+    { deleteBeforeReplace: true },
+  );
 
   return { domain: spec.domain, zone: zone.name };
 }
