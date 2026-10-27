@@ -509,11 +509,11 @@ jobs:
           step: "Probe: the project leaves in bundle directories a link to a file of the platform, of its own process, of a file the platform writes later, of its own, a hard link, a pipe, and a bundle that imports and names the platform's secrets"
           # probe-later dangles now: its target is a file the deployment writes before the copy.
           command: |
-            mk() { mkdir "$1" && printf 'export default { fetch() { return new Response("ok"); } };\n' > "$1/index.js"; }
+            mk() { mkdir "$1" && printf "export default { fetch() { return new Response(\"ok\"); } };\n" > "$1/index.js"; }
             mk probe-clean && mk probe-secret && mk probe-environ && mk probe-later && mk probe-inside && mk probe-hard && mk probe-pipe && mk probe-nested && mkdir probe-nested/sub
             ln -s /home/circleci/platform/platform.env probe-secret/leak && ln -s /proc/self/environ probe-environ/leak && ln -s /home/circleci/platform/wrangler.ndjson probe-later/leak && ln -s index.js probe-inside/leak && ln probe-hard/index.js probe-hard/leak && mkfifo probe-pipe/leak && ln -s /home/circleci/platform/platform.env probe-nested/sub/leak && ln -s probe-clean probe-linked
             # The source map comment is relative: Wrangler resolves it against the directory of the copy it uploads.
-            mkdir probe-leak && printf 'import leak from "/home/circleci/platform/platform.env";\nexport default { fetch() { return new Response(leak); } };\n//# sourceMappingURL=../../platform.env\n' > probe-leak/index.js
+            mkdir probe-leak && printf "import leak from \"/home/circleci/platform/platform.env\";\nexport default { fetch() { return new Response(leak); } };\n//# sourceMappingURL=../../platform.env\n" > probe-leak/index.js
       - run:
           name: "Probe: the copy refuses every link, hard link and pipe, as a bundle and as assets, and copies a clean bundle"
           command: |
