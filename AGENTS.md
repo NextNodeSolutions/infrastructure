@@ -30,7 +30,7 @@ A change that weakens one is wrong, even when it compiles.
 
 - **In a `run` step, escape a heredoc marker as `\<<`.** CircleCI reserves `<<` in configuration files and fails the pipeline otherwise.
 - **Write a `run` step on one line when its name would repeat its command.** A named step earns its name by explaining something the command does not.
-- **Pin the executor image by tag and every platform tool by exact version.** A floating version changes the toolchain under every project at once. The cache key is made of those versions, so a bump rebuilds the cache on its own. The Pulumi CLI and the Cloudflare plugin are released with their SDKs under one version and are installed at the versions the platform package's lockfile names: a bump of the SDKs is the bump of the tools.
+- **Pin the executor image by tag and every platform tool by exact version.** A floating version changes the toolchain under every project at once. The cache key is made of those versions, so a bump rebuilds the cache on its own. The Pulumi CLI and the Cloudflare plugin are released with their SDKs under one version and are installed at the versions the platform package's manifest pins: a bump of the SDKs is the bump of the tools.
 - **Comments are in English and explain intent, not syntax.** The file is read by people who did not write it, in every project's pipeline view.
 - **Keep the install step strict.** The pnpm version comes from the project's `packageManager` field, accepted only as a plain version, and the lockfile is frozen. A project that drifts fails loudly at the first step instead of deploying something else.
 
