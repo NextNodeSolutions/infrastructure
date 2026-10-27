@@ -1,59 +1,71 @@
 #!/bin/bash
 # Run the canary's pipeline with the configuration and the platform package of a branch
-# of this repository, wait for it, and print each job's status, every failed step's
-# output and the output of the steps named by the regex, with token-shaped values redacted.
+# of this repository, on a branch of the canary, wait for it, print each job's status,
+# every failed step's output and the output of the steps named by SHOW, and save every
+# step's output, one log per job, with token-shaped values redacted.
 #
-# usage: CIRCLECI_TOKEN=... run-canary.sh <branch> [step-name-regex]
+# usage: infisical run ... -- run-canary.sh <branch> [canary-branch]
 #   APPROVE=1   approves the hold, so production is deployed too
 #   PROBE=1     runs the probe job in place of the pipeline
+#   SHOW=regex  the steps whose output is printed, beside the failed ones
+#   LOGS=dir    where the logs go, a new temporary directory by default
 #
 # The CircleCI personal token comes from the operator's own vault, never from a project
-# the pipeline's identity can read. It reaches curl through a file descriptor.
+# the pipeline's identity can read. It reaches curl through a file descriptor, so it
+# shows in no process listing.
 set -euo pipefail
 
-BRANCH=${1:?usage: run-canary.sh <branch> [step-name-regex]}
-SHOW=${2:-'Read nextnode|Fetch the secrets|Deploy|Resources|Smoke|Promote|Probe|Stand in'}
-: "${CIRCLECI_TOKEN:?CIRCLECI_TOKEN must be set}"
+BRANCH=${1:?usage: run-canary.sh <branch> [canary-branch]}
+CHECKOUT=${2:-main}
+SHOW=${SHOW:-'Read nextnode|Fetch the secrets|Deploy|Resources|Smoke|Promote|Probe|Stand in'}
+LOGS=${LOGS:-$(mktemp -d)}
+: "${CIRCLECI_TOKEN:?inject it with infisical run, never type or export it}"
 CC=https://circleci.com/api/v2
 PROJECT=circleci/TRU8GsHNL2QX13BVQE2UK8/FDPCoATpJwHnVvPDFPNiN
 DEFINITION=3b27438e-17b8-41f4-8e7e-372b32323712
+mkdir -p "$LOGS"
 
-json() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{let j={};try{j=JSON.parse(s||"{}")}catch{};const v=new Function("j","return ("+process.argv[1]+")")(j);console.log(v==null?"":typeof v==="string"?v:JSON.stringify(v))})' "$1"; }
-api() { curl -sS -K <(printf 'header = "Circle-Token: %s"\n' "$CIRCLECI_TOKEN") -H 'content-type: application/json' "$@"; }
+api() { curl -sS -H @/dev/fd/3 -H 'content-type: application/json' "$@" 3<<<"Circle-Token: $CIRCLECI_TOKEN"; }
 redact() { sed -E 's/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_.-]+/<redacted-jwt>/g; s/[A-Za-z0-9_-]{40,}/<redacted>/g'; }
 
-probe=$([ -n "${PROBE:-}" ] && echo true || echo false)
-run=$(api -X POST "$CC/project/$PROJECT/pipeline/run" -d "{\"definition_id\":\"$DEFINITION\",\"config\":{\"branch\":\"$BRANCH\"},\"checkout\":{\"branch\":\"main\"},\"parameters\":{\"program_ref\":\"$BRANCH\",\"probe\":$probe}}")
-pipeline=$(printf '%s' "$run" | json 'j.id')
-[ -n "$pipeline" ] || { printf '%s\n' "$run" | head -c 300; echo; exit 1; }
-echo "pipeline $(printf '%s' "$run" | json 'j.number') ($pipeline) branch=$BRANCH probe=$probe"
+body=$(jq -nc --arg d "$DEFINITION" --arg b "$BRANCH" --arg c "$CHECKOUT" --argjson p "$([ -n "${PROBE:-}" ] && echo true || echo false)" \
+  '{definition_id: $d, config: {branch: $b}, checkout: {branch: $c}, parameters: {program_ref: $b, probe: $p}}')
+run=$(api -X POST "$CC/project/$PROJECT/pipeline/run" -d "$body")
+pipeline=$(jq -r '.id // empty' <<<"$run")
+[ -n "$pipeline" ] || { head -c 300 <<<"$run" | redact; echo; exit 1; }
+echo "pipeline $(jq -r .number <<<"$run") ($pipeline) branch=$BRANCH canary=$CHECKOUT probe=${PROBE:-} logs=$LOGS"
 
-approved=
-for _ in $(seq 1 240); do
-  workflow=$(api "$CC/pipeline/$pipeline/workflow" | json 'j.items?.[0]')
-  status=$(printf '%s' "$workflow" | json 'j.status')
-  id=$(printf '%s' "$workflow" | json 'j.id')
+status="" id="" approved=""
+while [ "$SECONDS" -lt 3600 ]; do
+  workflow=$(api "$CC/pipeline/$pipeline/workflow" | jq -c '.items[0] // {}')
+  status=$(jq -r '.status // empty' <<<"$workflow")
+  id=$(jq -r '.id // empty' <<<"$workflow")
   if [ "$status" = on_hold ] && [ -n "${APPROVE:-}" ] && [ -z "$approved" ]; then
-    request=$(api "$CC/workflow/$id/job" | json 'j.items.find(x=>x.type==="approval")?.approval_request_id')
-    [ -n "$request" ] && api -o /dev/null -X POST "$CC/workflow/$id/approve/$request" && approved=1 && echo "approved the hold" && { sleep 5; continue; }
+    request=$(api "$CC/workflow/$id/job" | jq -r '[.items[] | select(.type == "approval" and .status == "on_hold")][0].approval_request_id // empty')
+    [ -n "$request" ] && api -o /dev/null -X POST "$CC/workflow/$id/approve/$request" && approved=1 && echo "approved the hold"
   fi
   # An approved hold reads as on_hold for a few more polls.
-  case "$status" in success|failed|error|canceled) break;; on_hold) [ -n "$approved" ] || break;; esac
+  case "$status" in success|failed|error|canceled|unauthorized) break;; on_hold) [ -n "${APPROVE:-}" ] || break;; esac
   if [ -z "$status" ]; then
-    errors=$(api "$CC/pipeline/$pipeline" | json 'j.errors?.map(e=>e.type+" "+e.message).join(" | ")')
+    errors=$(api "$CC/pipeline/$pipeline" | jq -r '[.errors[]? | "\(.type) \(.message)"] | join(" | ")')
     [ -z "$errors" ] || { echo "pipeline error: $errors" | redact; exit 1; }
   fi
-  sleep 5
+  sleep 10
 done
 echo "workflow: ${status:-unknown}"
+
 jobs=$(api "$CC/workflow/$id/job")
-printf '%s' "$jobs" | json 'j.items.map(x=>x.name+"="+x.status+(x.job_number?"#"+x.job_number:"")).join("  ")'
-for number in $(printf '%s' "$jobs" | json 'j.items.filter(x=>x.job_number).map(x=>x.job_number).join(" ")'); do
+jq -r '[.items[] | "\(.name)=\(.status)\(if .job_number then "#\(.job_number)" else "" end)"] | join("  ")' <<<"$jobs"
+jq -r '.items[] | select(.type == "build" and .job_number) | "\(.job_number)\t\(.name)"' <<<"$jobs" | while IFS=$'\t' read -r number name; do
   job=$(api "https://circleci.com/api/v1.1/project/$PROJECT/$number")
-  echo "== job $(printf '%s' "$job" | json 'j.workflows?.job_name') (#$number) $(printf '%s' "$job" | json 'j.status')"
-  printf '%s' "$job" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);const re=new RegExp(process.argv[1]);for(const st of j.steps||[])for(const a of st.actions||[]){if(a.status!=="success"||re.test(st.name))console.log((a.status==="success"?"ok   ":"FAIL ")+st.name+"\t"+(a.output_url||""))}})' "$SHOW" | while IFS=$'\t' read -r line url; do
-    echo "  $line"
-    if [ -n "$url" ]; then curl -s "$url" | json 'j.map(m=>m.message).join("")' | redact | tail -n 15 | sed 's/^/      | /'; fi
+  echo "== job $name (#$number) $(jq -r .status <<<"$job") -> $LOGS/$name.log"
+  jq -r '.steps[] | .name as $step | .actions[] | [$step, .status, .output_url // ""] | @tsv' <<<"$job" | while IFS=$'\t' read -r step state url; do
+    output=$([ -z "$url" ] || curl -sS "$url" | jq -r '.[].message' | redact)
+    printf '===== %s (%s)\n%s\n' "$step" "$state" "$output" >>"$LOGS/$name.log"
+    if [ "$state" != success ] || [[ $step =~ $SHOW ]]; then
+      echo "  $([ "$state" = success ] && echo "ok  " || echo FAIL) $step"
+      [ -z "$output" ] || tail -n 15 <<<"$output" | sed 's/^/      | /'
+    fi
   done
 done
 # Without APPROVE, a green pipeline rests on hold.
