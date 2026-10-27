@@ -54,8 +54,8 @@ The step accepts only the keys that describe the Worker's own code and runtime, 
 
 Two rules hold for what the accepted keys reach:
 
-- **Every path stays inside the repository.** The entry point, the TypeScript configuration, the module root and the assets directory resolve from the root to somewhere under it, and no link of the checkout, after the build, leads outside it, whether its target exists at that moment or not. The upload reads these as the platform user, so a path or a link that reaches out of the checkout would upload a file of the platform. Module rules are globs evaluated under the module root and need no check of their own.
-- **The bundle is the project's.** After the build, Wrangler bundles the entry point as the project user, with the generated configuration, and the upload takes the result as it is, without bundling. An import of the project's code reaches what the project can read and nothing else. A Worker of static assets only has no entry point and no bundle.
+- **Every path stays inside the repository.** The entry point, the TypeScript configuration, the module root and the assets directory resolve from the root to somewhere under it, and the bundle and the assets directory hold no link, hard link or pipe after the build: the platform copies them for the upload and refuses each. The upload reads with the platform credential, so a path or a link that reaches out of the checkout would upload a file of the platform. Module rules are globs evaluated under the module root and need no check of their own.
+- **The bundle is the project's.** After the build, Wrangler bundles the entry point as the project user, with the generated configuration, and the upload takes a copy of the result as it is, without bundling and without source maps. An import of the project's code reaches what the project can read and nothing else. A Worker of static assets only has no entry point and no bundle.
 
 A production Worker keeps preview URLs enabled. The pipeline checks a production version on its preview URL before promoting it, and fails the deployment when the upload yields none.
 
@@ -84,7 +84,7 @@ A refusal of `nextnode.toml`, its NextNode keys or its Wrangler keys, happens in
 | Mistake | Where it shows |
 | --- | --- |
 | A missing or malformed key of `nextnode.toml`, a refused Wrangler key, a path outside the repository, a repository name that cannot name a Worker | The read step of the deployment job, which prints the key or the rule. The checks job does not read the file, so the error appears on `main` only. |
-| A link of the checkout that leads outside it, left by the build or committed, dangling or not | The seal step of the deployment job, after the build and before the upload, which names each link. |
+| A link, a hard link or a pipe in the bundle or the assets, left by the build or committed | The copy step of the deployment job, after the build and before the upload, which names the file. |
 | An entry point the bundler cannot resolve | The bundle step of the deployment job, run as the project user, with Wrangler's own message. |
 | No Infisical project named after the repository, or two | The secrets step of the deployment job, before any project code runs. |
 | An unpinned or malformed `packageManager` | The install step of the checks job, on the first push. |

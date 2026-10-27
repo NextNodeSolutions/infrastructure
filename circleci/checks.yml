@@ -23,7 +23,8 @@
 # Two users share the job. The platform user owns the job: it trades an OIDC token
 # for a vault token inside one step, keeps the platform secrets in a file only it
 # can read, generates Wrangler's configuration from the committed nextnode.toml
-# before any project code, and uploads the bundle the project user built. The
+# before any project code, and uploads its own link-free copy of the bundle the
+# project user built. The
 # project user runs every project command through `project-run`: install, build,
 # bundle, migrations. Its environment is built from a list written here, it receives the
 # application's secrets of the environment being deployed and nothing else, and it
@@ -107,14 +108,14 @@ commands:
             : > /home/circleci/platform/empty.env
             # Two functions for the later steps, text written here and nothing else.
             # `nn <file> <key>` reads one value of a platform JSON file.
-            # `platform_wrangler <args>` runs Wrangler as the platform user on the generated
-            # configuration, which holds the one environment, from the platform's directory,
-            # with the platform's secrets loaded in a subshell and its structured output kept
-            # for the deployment record.
+            # `platform_wrangler <args>` runs Wrangler as the platform user on the
+            # configuration of the copy it uploads, from the platform's directory, with the
+            # platform's secrets loaded in a subshell and its structured output kept for the
+            # deployment record.
             cat >> "$BASH_ENV" \<<'ENV'
             nn() { node -p "require(\"/home/circleci/platform/\" + process.argv[1] + \".json\")[process.argv[2]] ?? \"\"" -- "$1" "$2"; }
-            # The caller's arguments come first: --env-file takes a list and would swallow an entry point placed after it.
-            platform_wrangler() { ( cd /home/circleci/platform && set -a && . /home/circleci/platform/platform.env && set +a && WRANGLER_OUTPUT_FILE_PATH=/home/circleci/platform/wrangler.ndjson wrangler "$@" --config /home/circleci/platform/wrangler.json --env-file /home/circleci/platform/empty.env ); }
+            # The caller's arguments come first: --env-file takes a list and would swallow a positional one placed after it.
+            platform_wrangler() { ( cd /home/circleci/platform && set -a && . /home/circleci/platform/platform.env && set +a && WRANGLER_OUTPUT_FILE_PATH=/home/circleci/platform/wrangler.ndjson wrangler "$@" --config /home/circleci/platform/upload/wrangler.json --env-file /home/circleci/platform/empty.env ); }
             ENV
   platform-tools:
     description: Install the Pulumi CLI and the Cloudflare provider plugin into the platform user's home, at the versions the platform package's lockfile names, from the cache when they are unchanged.
@@ -332,30 +333,29 @@ jobs:
           command: migrate=$(node -p "require(\"/home/circleci/platform/nextnode.json\").migrate"); if [ -n "$migrate" ]; then echo "+ $migrate"; eval "$migrate"; else echo "No migrate command in nextnode.toml, nothing to run."; fi
       - end-project
       - run:
-          name: Seal the checkout
-          # Wrangler reads and uploads what the project left in the checkout, as the
-          # platform user: a link that resolves outside it is refused before Wrangler runs.
-          command: node /home/circleci/platform/infrastructure/platform/sealed.ts --root ~/project
+          name: Copy the upload
+          # Wrangler uploads with the platform credential, so it reads only the platform's
+          # copy of the bundle and the assets, made with every project process ended and
+          # refusing any link: a link could name a file of the platform.
+          command: node /home/circleci/platform/infrastructure/platform/stage.ts --checkout ~/project --config /home/circleci/platform/wrangler.json --bundle "$(nn nextnode bundle)" --out /home/circleci/platform/upload
       - run:
           name: Deploy
           # Development replaces what serves, and so does a production Worker's first
           # deployment, when nothing serves yet. Every other production deployment is a
           # version without traffic, promoted by a later step. Wrangler runs as the
-          # platform user on the generated configuration and uploads the bundle the
-          # project user built, without bundling: it reads the configuration's paths and
-          # the sealed checkout, never an import. What it did is read from its structured output.
+          # platform user on the platform's copy, without bundling and without source
+          # maps: it reads no file an import or a comment of the bundle names. What it did
+          # is read from its structured output.
           command: |
             rm -f /home/circleci/platform/wrangler.ndjson
-            bundle=$(nn nextnode bundle); script=()
-            [ -z "$bundle" ] || script=(--no-bundle ~/project/"$bundle")
             if [ "$NEXTNODE_ENVIRONMENT" = development ]; then
-              platform_wrangler deploy "${script[@]}"
+              platform_wrangler deploy
             elif listed=$(platform_wrangler versions list 2>&1); then
-              platform_wrangler versions upload --message "$CIRCLE_SHA1" "${script[@]}"
+              platform_wrangler versions upload --message "$CIRCLE_SHA1"
             elif printf '%s\n' "$listed" | grep -q "code: 10007"; then
               # 10007 is Cloudflare's code for a Worker that does not exist. Any other error stops here.
               echo "First deployment of this Worker: nothing serves yet, deployed directly."
-              platform_wrangler deploy "${script[@]}"
+              platform_wrangler deploy
             else
               printf '%s\n' "$listed"; exit 1
             fi
@@ -506,32 +506,51 @@ jobs:
           step: "Probe: the project cannot hard-link a file of the platform into the checkout"
           command: 'if ln /home/circleci/platform/platform.env probe-hard 2> /dev/null; then echo "hard-linked the platform secrets into the checkout"; exit 1; fi; [ ! -e probe-hard ]'
       - project-run:
-          step: "Probe: the project links a file of the platform, one of its own process, a file the platform writes later, and one of its own, into the checkout"
-          # probe-later dangles now: its target is a file the deployment writes before Wrangler reads the checkout.
-          command: 'ln -s /home/circleci/platform/platform.env probe-secret && ln -s /proc/self/environ probe-environ && ln -s /home/circleci/platform/wrangler.ndjson probe-later && ln -s . probe-inside'
-      - run:
-          name: "Probe: the seal refuses the three links that leave the checkout, names them, and keeps the fourth"
+          step: "Probe: the project leaves in bundle directories a link to a file of the platform, of its own process, of a file the platform writes later, of its own, a hard link, a pipe, and a bundle that imports and names the platform's secrets"
+          # probe-later dangles now: its target is a file the deployment writes before the copy.
           command: |
-            if out=$(node /home/circleci/platform/infrastructure/platform/sealed.ts --root ~/project 2>&1); then echo "accepted a checkout with links outside it"; exit 1; fi
-            for link in probe-secret probe-environ probe-later; do printf '%s\n' "$out" | grep -q "$link" || { echo "not named: $link"; printf '%s\n' "$out"; exit 1; }; done
-            ! printf '%s\n' "$out" | grep -q probe-inside
-            rm ~/project/probe-secret ~/project/probe-environ ~/project/probe-later
-            node /home/circleci/platform/infrastructure/platform/sealed.ts --root ~/project
+            mk() { mkdir "$1" && printf 'export default { fetch() { return new Response("ok"); } };\n' > "$1/index.js"; }
+            mk probe-clean && mk probe-secret && mk probe-environ && mk probe-later && mk probe-inside && mk probe-hard && mk probe-pipe && mk probe-nested && mkdir probe-nested/sub
+            ln -s /home/circleci/platform/platform.env probe-secret/leak && ln -s /proc/self/environ probe-environ/leak && ln -s /home/circleci/platform/wrangler.ndjson probe-later/leak && ln -s index.js probe-inside/leak && ln probe-hard/index.js probe-hard/leak && mkfifo probe-pipe/leak && ln -s /home/circleci/platform/platform.env probe-nested/sub/leak && ln -s probe-clean probe-linked
+            # The source map comment is relative: Wrangler resolves it against the directory of the copy it uploads.
+            mkdir probe-leak && printf 'import leak from "/home/circleci/platform/platform.env";\nexport default { fetch() { return new Response(leak); } };\n//# sourceMappingURL=../../platform.env\n' > probe-leak/index.js
       - run:
-          name: "Probe: the upload takes the bundle as it is, so an import of a platform file reaches nothing"
-          # The bundle is the project's: its entry point imports the platform's secrets and
-          # the configuration asks for such files as text modules. The positive control
-          # bundles it the way the platform never does, and the secret is in the output.
-          # The assets are dropped from the copy: no build ran here, and they are not the question.
+          name: "Probe: the copy refuses every link, hard link and pipe, as a bundle and as assets, and copies a clean bundle"
           command: |
             work=$(mktemp -d)
-            printf 'import leak from "/home/circleci/platform/platform.env";\nexport default { fetch() { return new Response(leak); } };\n' > "$work/index.js"
-            node -e 'const fs = require("node:fs"); const [from, to, main] = process.argv.slice(1); const config = JSON.parse(fs.readFileSync(from, "utf8")); delete config.assets; delete config.base_dir; fs.writeFileSync(to, JSON.stringify({ ...config, main, find_additional_modules: true, rules: [{ type: "Text", globs: ["**/*.env"] }] }))' -- /home/circleci/platform/wrangler.json "$work/wrangler.json" "$work/index.js"
-            upload() { ( cd /home/circleci/platform && set -a && . /home/circleci/platform/platform.env && set +a && wrangler deploy --dry-run "$@" --config "$work/wrangler.json" --env-file /home/circleci/platform/empty.env > "$work/wrangler.log" 2>&1 ); }
-            upload --outdir "$work/control" || { echo "the positive control did not bundle:"; cat "$work/wrangler.log"; exit 1; }
-            grep -rq "PLATFORM_PROBE=platform" "$work/control" || { echo "the positive control did not bundle the platform file: the probe would prove nothing"; exit 1; }
-            upload --no-bundle --outdir "$work/upload"
-            if grep -rq "PLATFORM_PROBE=platform" "$work/upload"; then echo "the upload carries the platform's secrets"; exit 1; fi
+            # The canary's assets are a build output, absent here: each copy names its own.
+            node -e 'const fs = require("node:fs"); const [from, to] = process.argv.slice(1); const { assets, ...config } = JSON.parse(fs.readFileSync(from, "utf8")); fs.writeFileSync(to + "/bare.json", JSON.stringify(config)); for (const name of ["clean", "secret", "environ", "later", "inside", "hard", "pipe", "nested", "linked"]) fs.writeFileSync(`${to}/assets-${name}.json`, JSON.stringify({ ...config, assets: { binding: "ASSETS", ...assets, directory: `probe-${name}` } }))' -- /home/circleci/platform/wrangler.json "$work"
+            stage() { node /home/circleci/platform/infrastructure/platform/stage.ts --checkout ~/project --config "$work/$1" --bundle "$2" --out "$work/upload" 2>&1; }
+            for name in secret environ later inside hard pipe nested linked; do
+              for attempt in "bare.json probe-$name/index.js" "assets-$name.json probe-clean/index.js"; do
+                if out=$(stage $attempt); then echo "copied $name ($attempt)"; exit 1; fi
+                printf '%s\n' "$out" | grep -q "is refused" || { echo "the copy failed on $name for another reason:"; printf '%s\n' "$out"; exit 1; }
+                echo "refused: $name ($attempt)"
+              done
+            done
+            stage assets-clean.json probe-clean/index.js
+            [ -f "$work/upload/worker/index.js" ] && [ -f "$work/upload/assets/index.js" ]
+      - run:
+          name: "Probe: the upload of the copy reads no import and no source map the bundle names"
+          # The bundle is the project's: its entry point imports the platform's secrets as a
+          # text module and its source map comment names them. Each positive control turns
+          # one of the two on, the way the platform never does, and Wrangler reads the
+          # secret. The copy is then uploaded the platform's way, and nothing reads it.
+          command: |
+            work=$(mktemp -d)
+            node -e 'const fs = require("node:fs"); const { assets, ...config } = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); fs.writeFileSync(process.argv[2], JSON.stringify(config))' -- /home/circleci/platform/wrangler.json "$work/bare.json"
+            node /home/circleci/platform/infrastructure/platform/stage.ts --checkout ~/project --config "$work/bare.json" --bundle probe-leak/index.js --out /home/circleci/platform/upload
+            with() { node -e 'const fs = require("node:fs"); const [from, to, extra] = process.argv.slice(1); fs.writeFileSync(to, JSON.stringify({ ...JSON.parse(fs.readFileSync(from, "utf8")), ...JSON.parse(extra) }))' -- /home/circleci/platform/upload/wrangler.json "$work/$1.json" "$2"; }
+            with bundled '{ "no_bundle": false, "find_additional_modules": true, "rules": [{ "type": "Text", "globs": ["**/*.env"] }] }'
+            with mapped '{ "upload_source_maps": true }'
+            upload() { ( cd /home/circleci/platform && set -a && . /home/circleci/platform/platform.env && set +a && wrangler deploy --dry-run --outdir "$work/out-$1" --config "$work/$1.json" --env-file /home/circleci/platform/empty.env > "$work/$1.log" 2>&1 ); }
+            upload bundled || { echo "the bundling control did not bundle:"; cat "$work/bundled.log"; exit 1; }
+            grep -rq "PLATFORM_PROBE=platform" "$work/out-bundled" || { echo "the bundling control did not read the platform file: the probe would prove nothing"; exit 1; }
+            # Wrangler reads the named map and fails to parse it: the platform file is not JSON.
+            ! upload mapped && grep -q "is not valid JSON" "$work/mapped.log" || { echo "the source map control did not read the platform file: the probe would prove nothing"; cat "$work/mapped.log"; exit 1; }
+            cp /home/circleci/platform/upload/wrangler.json "$work/staged.json"
+            upload staged || { echo "the upload of the copy failed:"; cat "$work/staged.log"; exit 1; }
+            if grep -rqE "PLATFORM_PROBE|is not valid JSON" "$work/out-staged" "$work/staged.log"; then echo "the upload of the copy read the platform's secrets"; exit 1; fi
       - project-run:
           step: "Probe: the project configures git to run a command, and its own git runs it"
           # The positive control: the hook runs for the project's git, so the platform's
