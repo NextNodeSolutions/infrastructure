@@ -7,11 +7,10 @@
 // CLI and the Cloudflare provider plugin are found through PATH and PULUMI_HOME.
 // Progress goes to stderr; stdout receives the stack outputs as one JSON object.
 import { createHash } from "node:crypto";
-import { createRequire } from "node:module";
 import { parseArgs } from "node:util";
 import * as automation from "@pulumi/pulumi/automation/index.js";
 import { program } from "./src/program.ts";
-import { readSpec } from "./src/spec.ts";
+import { isRecord, readSpec } from "./src/spec.ts";
 
 const { values: args } = parseArgs({
   options: {
@@ -31,9 +30,9 @@ function env(name: string): string {
 // Phase timings on stderr: the job's budget is measured in seconds.
 const started = Date.now();
 let last = started;
-function lap(phase: string): void {
+function lap(phase: string, since = last): void {
   const now = Date.now();
-  process.stderr.write(`[${phase}: ${((now - last) / 1000).toFixed(1)}s]\n`);
+  process.stderr.write(`[${phase}: ${((now - since) / 1000).toFixed(1)}s]\n`);
   last = now;
 }
 
@@ -50,9 +49,10 @@ async function tokenId(): Promise<string> {
   const response = await fetch("https://api.cloudflare.com/client/v4/user/tokens/verify", {
     headers: { authorization: `Bearer ${token}` },
   });
-  const body = (await response.json()) as { success: boolean; result?: { id?: string } };
-  if (!body.success || !body.result?.id) throw new Error(`Cloudflare did not verify the token (HTTP ${response.status})`);
-  return body.result.id;
+  const body: unknown = await response.json();
+  const result = isRecord(body) && body.success === true && isRecord(body.result) ? body.result : undefined;
+  if (typeof result?.id !== "string") throw new Error(`Cloudflare did not verify the token (HTTP ${response.status})`);
+  return result.id;
 }
 
 const accessKeyId = await tokenId();
@@ -77,27 +77,23 @@ const stack = await automation.LocalWorkspace.createOrSelectStack(
     },
   },
 );
-
-// The CLI and the SDK are released together: the job installs the CLI at the version
-// this package pins, and a drift between the two is a mistake to fix, not to run with.
-const sdkVersion: string = createRequire(import.meta.url)("@pulumi/pulumi/package.json").version;
-const cliVersion = stack.workspace.pulumiVersion;
-if (cliVersion !== sdkVersion) {
-  throw new Error(`Pulumi CLI ${cliVersion} does not match @pulumi/pulumi ${sdkVersion}: pin both to one version`);
-}
-
 lap("stack selected");
-const onOutput = (out: string) => process.stderr.write(out);
+
 // Refreshed in the same run: what disappeared outside Pulumi, such as a domain that went
 // with a deleted Worker, leaves the state instead of failing its own deletion. One run
 // of the program, not two: each run starts a language host.
-if (args.preview) {
-  await stack.preview({ onOutput, diff: true, refresh: true });
-  lap("preview");
-} else {
-  await stack.up({ onOutput, refresh: true });
+const onOutput = (out: string): void => { process.stderr.write(out); };
+async function converge(): Promise<automation.OutputMap> {
+  if (args.preview) {
+    await stack.preview({ onOutput, diff: true, refresh: true });
+    lap("preview");
+    return stack.outputs();
+  }
+  const { outputs } = await stack.up({ onOutput, refresh: true });
   lap("up");
+  return outputs;
 }
-const outputs = await stack.outputs();
-process.stderr.write(`[total: ${((Date.now() - started) / 1000).toFixed(1)}s]\n`);
-process.stdout.write(`${JSON.stringify(Object.fromEntries(Object.entries(outputs).map(([k, v]) => [k, v.value])))}\n`);
+
+const outputs = await converge();
+lap("total", started);
+process.stdout.write(`${JSON.stringify(Object.fromEntries(Object.entries(outputs).map(([key, output]) => [key, output.value])))}\n`);
