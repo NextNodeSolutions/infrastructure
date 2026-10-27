@@ -17,6 +17,7 @@
     "@pulumi/cloudflare": "6.23.1",
     "@pulumi/pulumi": "3.272.0",
     "smol-toml": "1.9.1",
+    "valibot": "1.5.0",
     "wrangler": "4.152.0"
   },
   "devDependencies": {

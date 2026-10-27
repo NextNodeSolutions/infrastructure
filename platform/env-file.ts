@@ -2,7 +2,7 @@
 // secret, each value a single-quoted literal. The names go to stderr for the job log;
 // the values never do.
 import { text } from "node:stream/consumers";
-import { isRecord } from "./src/spec.ts";
+import { isRecord } from "./src/record.ts";
 
 const SHELL_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 

@@ -12,7 +12,7 @@ import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFi
 import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { within } from "./src/paths.ts";
-import { isRecord } from "./src/spec.ts";
+import { isRecord } from "./src/record.ts";
 
 const { values: args } = parseArgs({
   options: { checkout: { type: "string" }, config: { type: "string" }, bundle: { type: "string" }, out: { type: "string" } },

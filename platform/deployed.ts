@@ -5,7 +5,7 @@
 //   node deployed.ts --wrangler-output <file> --domain <hostname>
 import { readFileSync } from "node:fs";
 import { parseArgs } from "node:util";
-import { isRecord } from "./src/spec.ts";
+import { isRecord } from "./src/record.ts";
 
 const { values: args } = parseArgs({
   options: { "wrangler-output": { type: "string" }, domain: { type: "string" } },

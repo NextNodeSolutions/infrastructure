@@ -5,7 +5,7 @@
 //
 //   INFISICAL_TOKEN=... node vault-project.ts --name <repository>
 import { parseArgs } from "node:util";
-import { isRecord } from "./src/spec.ts";
+import { isRecord } from "./src/record.ts";
 
 const { values: args } = parseArgs({ options: { name: { type: "string" } } });
 if (!args.name) throw new Error("usage: vault-project.ts --name <repository>");
