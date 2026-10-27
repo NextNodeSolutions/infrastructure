@@ -7,6 +7,7 @@
   "engines": {
     "node": ">=24"
   },
+  "packageManager": "pnpm@10.11.0",
   "scripts": {
     "check": "tsc --noEmit",
     "deploy": "node deploy.ts"
@@ -22,10 +23,12 @@
     "@types/node": "24.9.1",
     "typescript": "6.0.3"
   },
-  "allowScripts": {
-    "@infisical/cli@0.44.9": true,
-    "esbuild@0.28.2": true,
-    "workerd@1.20261019.1": true,
-    "protobufjs@7.6.6": true
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@infisical/cli",
+      "esbuild",
+      "protobufjs",
+      "workerd"
+    ]
   }
 }

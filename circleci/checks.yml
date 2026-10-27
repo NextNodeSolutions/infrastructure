@@ -35,7 +35,7 @@
 #
 # The platform package of this repository, cloned at `program_ref` before anything
 # else, holds every program the job runs and every npm tool it uses, at the versions
-# its lockfile names. The parameter is `main` unless a canary run names a branch, so
+# its manifest pins and its lockfile freezes. The parameter is `main` unless a canary run names a branch, so
 # a project always runs the programs that `main` holds, as it runs this file from `main`.
 #
 # Nothing the project controls is ever evaluated by a shell. Values read from
@@ -70,7 +70,7 @@ canary: &canary
 
 commands:
   platform-package:
-    description: Clone the platform package from this repository at program_ref into the platform's directory and install its dependencies, from the cache when its lockfile is unchanged.
+    description: Clone the platform package from this repository at program_ref into the platform's directory and install its dependencies, from the cache when its manifest and lockfile are unchanged.
     steps:
       - run:
           name: Clone the platform package
@@ -88,12 +88,15 @@ commands:
             echo 'export PATH=/home/circleci/platform/infrastructure/platform/node_modules/.bin:$PATH' >> "$BASH_ENV"
       - restore_cache:
           keys:
-            - platform-{{ checksum "/home/circleci/platform/infrastructure/platform/package-lock.json" }}
+            - platform-{{ checksum "/home/circleci/platform/infrastructure/platform/package.json" }}-{{ checksum "/home/circleci/platform/infrastructure/platform/pnpm-lock.yaml" }}
       - run:
           name: Install the platform package's dependencies, unless cached
-          command: cd /home/circleci/platform/infrastructure/platform && { [ -d node_modules ] || npm ci --omit=dev --no-fund --no-audit; }
+          # Corepack runs the pnpm the manifest pins, without replacing the global pnpm the
+          # project installs later. The store lies in the platform's directory: the project
+          # user writes in its own store, and the platform's files are hard links to this one.
+          command: cd /home/circleci/platform/infrastructure/platform && { [ -d node_modules ] || COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm install --frozen-lockfile --prod --store-dir /home/circleci/platform/pnpm-store; }
       - save_cache:
-          key: platform-{{ checksum "/home/circleci/platform/infrastructure/platform/package-lock.json" }}
+          key: platform-{{ checksum "/home/circleci/platform/infrastructure/platform/package.json" }}-{{ checksum "/home/circleci/platform/infrastructure/platform/pnpm-lock.yaml" }}
           paths: [/home/circleci/platform/infrastructure/platform/node_modules]
   read-toml:
     description: Read nextnode.toml for the environment into the spec and the Wrangler configuration of its Worker, or halt the job when the environment is not declared.
@@ -119,16 +122,16 @@ commands:
             platform_wrangler() { ( cd /home/circleci/platform && set -a && . /home/circleci/platform/platform.env && set +a && WRANGLER_OUTPUT_FILE_PATH=/home/circleci/platform/wrangler.ndjson wrangler "$@" --config /home/circleci/platform/upload/wrangler.json --env-file /home/circleci/platform/empty.env ); }
             ENV
   platform-tools:
-    description: Install the Pulumi CLI and the Cloudflare provider plugin into the platform user's home, at the versions the platform package's lockfile names, from the cache when they are unchanged.
+    description: Install the Pulumi CLI and the Cloudflare provider plugin into the platform user's home, at the versions the platform package's manifest pins, from the cache when they are unchanged.
     steps:
       - run:
           name: Name the Pulumi versions
           # The CLI and the plugin are released with their SDKs under one version, so a
           # bump of the SDKs in the platform package is a bump of the tools.
           command: |
-            lock=/home/circleci/platform/infrastructure/platform/package-lock.json
-            version() { node -p "require(process.argv[1]).packages['node_modules/' + process.argv[2]].version" -- "$lock" "$1" | grep -xE '[0-9]+\.[0-9]+\.[0-9]+'; }
-            pulumi=$(version @pulumi/pulumi) && cloudflare=$(version @pulumi/cloudflare) || { echo "the lockfile names no release version for the Pulumi SDKs"; exit 1; }
+            manifest=/home/circleci/platform/infrastructure/platform/package.json
+            version() { node -p "require(process.argv[1]).dependencies[process.argv[2]]" -- "$manifest" "$1" | grep -xE '[0-9]+\.[0-9]+\.[0-9]+'; }
+            pulumi=$(version @pulumi/pulumi) && cloudflare=$(version @pulumi/cloudflare) || { echo "the manifest pins no release version for the Pulumi SDKs"; exit 1; }
             printf 'PULUMI=%s\nCLOUDFLARE=%s\n' "$pulumi" "$cloudflare" | tee /tmp/tools.txt
       - restore_cache:
           keys:
