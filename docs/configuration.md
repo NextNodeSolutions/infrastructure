@@ -4,7 +4,8 @@ This page lists what a project repository supplies to the pipeline and how a mis
 
 ```mermaid
 flowchart LR
-    T[nextnode.toml] --> R[Read step of the deployment job]
+    T[nextnode.toml] --> X[Check step of the checks job, every environment, on every push]
+    T --> R[Read step of the deployment job]
     R --> S[Spec of the environment, a JSON file of the platform user]
     R --> G[Generated Wrangler configuration, a JSON file of the platform user]
     S --> M[Migration command, run as the project user]
@@ -14,7 +15,7 @@ flowchart LR
     K[package.json scripts and packageManager] --> C[Checks job and the build]
 ```
 
-The read step runs once per deployment job, before any project code. It reads `nextnode.toml`, refuses what the platform cannot accept, and writes two files: the spec of the environment and the Wrangler configuration of its Worker. Every later step reads those files, never `nextnode.toml` again, so a project script that rewrites it during the build changes nothing.
+The file is read twice by the same program. On every push, the checks job reads it for every environment and writes nothing, so a mistake fails the branch, not the deployment after the merge or the approval. The read step of each deployment job reads it again for its own environment, before any project code, refuses what the platform cannot accept, and writes two files: the spec of the environment and the Wrangler configuration of its Worker. Every later step reads those files, never `nextnode.toml` again, so a project script that rewrites it during the build changes nothing.
 
 ## nextnode.toml
 
@@ -79,11 +80,11 @@ Every script runs as a user of its own, in an environment built from a list rath
 
 ## How a mistake is reported
 
-A refusal of `nextnode.toml`, its NextNode keys or its Wrangler keys, happens in the read step, with a message that names the key or the rule, before any secret is fetched and before any project code runs. The other mistakes show in the step that meets them.
+A mistake fails at the earliest job that can see it. A refusal of `nextnode.toml`, its NextNode keys or its Wrangler keys, happens in the check step of the checks job, on the first push, with a message that names the key or the rule, before any project code runs. The other mistakes show in the step that meets them.
 
 | Mistake | Where it shows |
 | --- | --- |
-| A missing or malformed key of `nextnode.toml`, a refused Wrangler key, a path outside the repository, a repository name that cannot name a Worker | The read step of the deployment job, which prints the key or the rule. The checks job does not read the file, so the error appears on `main` only. |
+| A file that is not valid TOML, a missing or malformed key of `nextnode.toml`, an environment the pipeline has no job for, no production environment, a refused Wrangler key, a path outside the repository, a repository name that cannot name a Worker | The check step of the checks job, on the first push, which prints the key or the rule. |
 | A link, a hard link or a pipe in the bundle or the assets, left by the build or committed | The copy step of the deployment job, after the build and before the upload, which names the file. |
 | An entry point the bundler cannot resolve | The bundle step of the deployment job, run as the project user, with Wrangler's own message. |
 | No Infisical project named after the repository, or two | The secrets step of the deployment job, before any project code runs. |
