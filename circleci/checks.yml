@@ -523,14 +523,16 @@ jobs:
           # The bundle is the project's: its entry point imports the platform's secrets and
           # the committed configuration asks for such files as text modules. The positive
           # control bundles it the way the platform never does, and the secret is in the output.
+          # The assets are dropped from the copy: no build ran here, and they are not the question.
           command: |
             entry=$(nn nextnode entry); config=$(nn nextnode wrangler_config)
             work=$(mktemp -d) && cp -r ~/project/. "$work"
-            node -e 'const fs = require("node:fs"), jsonc = require("/home/circleci/platform/infrastructure/platform/node_modules/jsonc-parser"); const file = process.argv[1]; const config = jsonc.parse(fs.readFileSync(file, "utf8"), [], { allowTrailingComma: true }); config.find_additional_modules = true; config.rules = [{ type: "Text", globs: ["**/*.env"] }]; fs.writeFileSync(file, JSON.stringify(config))' "$work/$entry/$config"
+            node -e 'const fs = require("node:fs"), jsonc = require("/home/circleci/platform/infrastructure/platform/node_modules/jsonc-parser"); const file = process.argv[1]; const config = jsonc.parse(fs.readFileSync(file, "utf8"), [], { allowTrailingComma: true }); config.find_additional_modules = true; config.rules = [{ type: "Text", globs: ["**/*.env"] }]; delete config.assets; for (const section of Object.values(config.env ?? {})) delete section.assets; fs.writeFileSync(file, JSON.stringify(config))' "$work/$entry/$config"
             mkdir -p "$work/$entry/.nextnode"
             printf 'import leak from "/home/circleci/platform/platform.env";\nexport default { fetch() { return new Response(leak); } };\n' > "$work/$entry/.nextnode/index.js"
-            upload() { ( cd /home/circleci/platform && set -a && . /home/circleci/platform/platform.env && set +a && wrangler deploy --dry-run "$@" --config "$work/$entry/$config" --env "$NEXTNODE_ENVIRONMENT" --env-file /home/circleci/platform/empty.env "$work/$entry/.nextnode/index.js" > /dev/null 2>&1 ); }
-            upload --outdir "$work/control" && grep -rq "PLATFORM_PROBE=platform" "$work/control" || { echo "the positive control did not bundle the platform file: the probe would prove nothing"; exit 1; }
+            upload() { ( cd /home/circleci/platform && set -a && . /home/circleci/platform/platform.env && set +a && wrangler deploy --dry-run "$@" --config "$work/$entry/$config" --env "$NEXTNODE_ENVIRONMENT" --env-file /home/circleci/platform/empty.env "$work/$entry/.nextnode/index.js" > "$work/wrangler.log" 2>&1 ); }
+            upload --outdir "$work/control" || { echo "the positive control did not bundle:"; cat "$work/wrangler.log"; exit 1; }
+            grep -rq "PLATFORM_PROBE=platform" "$work/control" || { echo "the positive control did not bundle the platform file: the probe would prove nothing"; exit 1; }
             upload --no-bundle --outdir "$work/upload"
             if grep -rq "PLATFORM_PROBE=platform" "$work/upload"; then echo "the upload carries the platform's secrets"; exit 1; fi
       - project-run:
