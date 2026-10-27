@@ -2,48 +2,31 @@
 // writes it as JSON in the platform's directory; every later step of the job, and the
 // program, read this file and never the project's files again.
 import { readFileSync } from "node:fs";
+import * as v from "valibot";
+import { Environment, HealthPath, Hostname } from "./nextnode-toml.ts";
 
-export type Spec = {
-  /** The repository's name, which names the project everywhere the platform keeps state for it: the Pulumi project and the vault project. */
-  readonly project: string;
-  /** Environment being deployed, also the stack name. */
-  readonly environment: string;
-  /** Route the smoke request targets after each upload. */
-  readonly health: string;
-  /** The project's migration command, empty when it declares none. */
-  readonly migrate: string;
-  /** Hostname of the environment, attached to its Worker as a custom domain. */
-  readonly domain: string;
-  /** Name of the environment's Worker, the repository's name suffixed with the environment. */
-  readonly worker_name: string;
-  /** The bundled entry point, relative to the checkout root, that the upload takes as it is; empty for a Worker of static assets only. */
-  readonly bundle: string;
-};
+const filled = v.pipe(v.string(), v.nonEmpty("is empty"));
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+export const Spec = v.object({
+  // The repository's name, which names the project everywhere the platform keeps state for it: the Pulumi project and the vault project.
+  project: filled,
+  // Environment being deployed, also the stack name.
+  environment: Environment,
+  // Route the smoke request targets after each upload.
+  health: HealthPath,
+  // The project's migration command, empty when it declares none.
+  migrate: v.string(),
+  // Hostname of the environment, attached to its Worker as a custom domain.
+  domain: Hostname,
+  // Name of the environment's Worker, the repository's name suffixed with the environment.
+  worker_name: filled,
+  // The bundled entry point, relative to the checkout root, that the upload takes as it is; empty for a Worker of static assets only.
+  bundle: v.string(),
+});
+export type Spec = v.InferOutput<typeof Spec>;
 
 export function readSpec(path: string): Spec {
-  const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
-  if (!isRecord(raw)) throw new Error(`${path}: not a JSON object`);
-  const text = (key: keyof Spec): string => {
-    const value = raw[key];
-    if (typeof value !== "string") throw new Error(`${path}: missing ${key}`);
-    return value;
-  };
-  const filled = (key: keyof Spec): string => {
-    const value = text(key);
-    if (value === "") throw new Error(`${path}: empty ${key}`);
-    return value;
-  };
-  return {
-    project: filled("project"),
-    environment: filled("environment"),
-    health: filled("health"),
-    migrate: text("migrate"),
-    domain: filled("domain"),
-    worker_name: filled("worker_name"),
-    bundle: text("bundle"),
-  };
+  const parsed = v.safeParse(Spec, JSON.parse(readFileSync(path, "utf8")));
+  if (!parsed.success) throw new Error(`${path}: ${v.summarize(parsed.issues)}`);
+  return parsed.output;
 }

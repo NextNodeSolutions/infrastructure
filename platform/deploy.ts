@@ -10,7 +10,8 @@ import { createHash } from "node:crypto";
 import { parseArgs } from "node:util";
 import * as automation from "@pulumi/pulumi/automation/index.js";
 import { program } from "./src/program.ts";
-import { isRecord, readSpec } from "./src/spec.ts";
+import { isRecord } from "./src/record.ts";
+import { readSpec } from "./src/spec.ts";
 
 const { values: args } = parseArgs({
   options: {

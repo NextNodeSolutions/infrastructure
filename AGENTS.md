@@ -66,7 +66,7 @@ The docs carry concepts, flows, states, rules and reasons. They never copy what 
 ## Extending
 
 - **A new job** goes into the pipeline's workflow with its `requires` chain and, when it needs the vault, the same login and export steps as the deployment job. A second workflow exists for one reason only: a job selected by a pipeline parameter that must run in place of the pipeline, as the probe job is. It is validated on the canary before merge.
-- **A new resource kind** is a key of `nextnode.toml`, read by the read step into the spec, and a Pulumi resource of the platform package's program keyed by that entry, with its identifier returned as a stack output for the Worker bindings. The key is documented on the configuration page and its failure mode in the table on the architecture page.
+- **A new resource kind** is a key of the schema of `nextnode.toml` in the platform package, which the read step parses into the spec, and a Pulumi resource of the platform package's program keyed by that entry, with its identifier returned as a stack output for the Worker bindings. The key is documented on the configuration page and its failure mode in the table on the architecture page.
 - **A new guarantee, or a new mechanism behind one,** comes with its probe: a step of the probe job that runs the attack as the project would and passes only when the attack fails. The docs name the guarantee, the probe is what keeps it true on every change.
 - **A new deployment target** is a port beside the Wrangler one, behind the same job and the same `nextnode.toml` keys where they apply.
 - **A new project** is registered by the registration script, never by clicking through the three dashboards.
