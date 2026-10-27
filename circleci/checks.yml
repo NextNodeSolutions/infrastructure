@@ -116,6 +116,7 @@ commands:
             cat >> "$BASH_ENV" \<<'ENV'
             nn() { node -p "require(\"/home/circleci/platform/\" + process.argv[1] + \".json\")[process.argv[2]] ?? \"\"" -- "$1" "$2"; }
             restore_wrangler_config() { cp --remove-destination "/home/circleci/platform/wrangler/$(nn nextnode wrangler_config)" ~/project/"$(nn nextnode entry)/$(nn nextnode wrangler_config)"; }
+            # The caller's arguments come first: --env-file takes a list and would swallow an entry point placed after it.
             platform_wrangler() { ( restore_wrangler_config && cd /home/circleci/platform && set -a && . /home/circleci/platform/platform.env && set +a && WRANGLER_OUTPUT_FILE_PATH=/home/circleci/platform/wrangler.ndjson wrangler "$@" --config ~/project/"$(nn nextnode entry)/$(nn nextnode wrangler_config)" --env "$NEXTNODE_ENVIRONMENT" --env-file /home/circleci/platform/empty.env ); }
             ENV
   platform-tools:
@@ -530,7 +531,8 @@ jobs:
             node -e 'const fs = require("node:fs"), jsonc = require("/home/circleci/platform/infrastructure/platform/node_modules/jsonc-parser"); const file = process.argv[1]; const config = jsonc.parse(fs.readFileSync(file, "utf8"), [], { allowTrailingComma: true }); config.find_additional_modules = true; config.rules = [{ type: "Text", globs: ["**/*.env"] }]; delete config.assets; for (const section of Object.values(config.env ?? {})) delete section.assets; fs.writeFileSync(file, JSON.stringify(config))' "$work/$entry/$config"
             mkdir -p "$work/$entry/.nextnode"
             printf 'import leak from "/home/circleci/platform/platform.env";\nexport default { fetch() { return new Response(leak); } };\n' > "$work/$entry/.nextnode/index.js"
-            upload() { ( cd /home/circleci/platform && set -a && . /home/circleci/platform/platform.env && set +a && wrangler deploy --dry-run "$@" --config "$work/$entry/$config" --env "$NEXTNODE_ENVIRONMENT" --env-file /home/circleci/platform/empty.env "$work/$entry/.nextnode/index.js" > "$work/wrangler.log" 2>&1 ); }
+            # The entry point comes first: --env-file takes a list and would swallow it.
+            upload() { ( cd /home/circleci/platform && set -a && . /home/circleci/platform/platform.env && set +a && wrangler deploy "$work/$entry/.nextnode/index.js" --dry-run "$@" --config "$work/$entry/$config" --env "$NEXTNODE_ENVIRONMENT" --env-file /home/circleci/platform/empty.env > "$work/wrangler.log" 2>&1 ); }
             upload --outdir "$work/control" || { echo "the positive control did not bundle:"; cat "$work/wrangler.log"; exit 1; }
             grep -rq "PLATFORM_PROBE=platform" "$work/control" || { echo "the positive control did not bundle the platform file: the probe would prove nothing"; exit 1; }
             upload --no-bundle --outdir "$work/upload"
