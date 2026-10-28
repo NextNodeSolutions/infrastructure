@@ -56,7 +56,7 @@ echo "workflow: ${status:-unknown}"
 
 jobs=$(api "$CC/workflow/$id/job")
 jq -r '[.items[] | "\(.name)=\(.status)\(if .job_number then "#\(.job_number)" else "" end)"] | join("  ")' <<<"$jobs"
-jq -r '.items[] | select(.type == "build" and .job_number) | "\(.job_number)\t\(.name)"' <<<"$jobs" | while IFS=$'\t' read -r number name; do
+jq -r '.items[] | select(.type == "build" and .job_number and .started_at) | "\(.job_number)\t\(.name)"' <<<"$jobs" | while IFS=$'\t' read -r number name; do
   job=$(api "https://circleci.com/api/v1.1/project/$PROJECT/$number")
   echo "== job $name (#$number) $(jq -r .status <<<"$job") -> $LOGS/$name.log"
   jq -r '.steps[] | .name as $step | .actions[] | [$step, .status, .output_url // ""] | @tsv' <<<"$job" | while IFS=$'\t' read -r step state url; do
