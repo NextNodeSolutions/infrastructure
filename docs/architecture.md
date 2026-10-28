@@ -61,7 +61,16 @@ sequenceDiagram
     G->>C: push event through the GitHub App
     C->>I: read the pipeline configuration
     C->>P: clone the project at the pushed ref
-    C->>C: checks, nextnode.toml of every environment first
+    C->>C: validate nextnode.toml for every environment
+    par independent project checks
+        C->>P: lint
+    and
+        C->>P: formatting
+    and
+        C->>P: types
+    and
+        C->>P: tests when declared
+    end
     opt ref is main
         C->>C: deploy-dev, which halts at once when the project declares no development environment
         Note over C,P: hold waits for a person to approve in CircleCI
@@ -76,7 +85,9 @@ Rules that the diagram encodes:
 - **The project decides whether it has a development environment.** A development environment with a database has its own cost and lifecycle, so it is not forced on every project. The workflow is static, so the development job starts for every project and halts as soon as it has read `nextnode.toml` when no development environment is declared; such a project still goes through the approval. The intended end state, listed under open points, reads the file before the jobs are chosen and sends a project without a development environment to production straight after the checks.
 - **The approval is the only manual step.** Anyone who can approve in the CircleCI organization can release. Restricting approval to a group is a paid CircleCI feature, so the organization membership is the control.
 
-`checks` first reads `nextnode.toml` for every environment with the platform package, as the platform user and before any project code, so a file the deployment jobs would refuse fails the pull request instead of `main` or the production job after its approval. It then installs the pnpm version pinned in the project's `package.json`, installs with a frozen lockfile, and runs the project's lint, format check and type check, and its tests when a `test` script exists. It enforces nothing of its own beyond the file, the pin and the lockfile. The contract with a project is the set of scripts, not their content. Even on a branch, project scripts run as a second user of the job, the same way as in the deployment job.
+The configuration check reads `nextnode.toml` for every environment with the platform package, as the platform user and before any project code. A file the deployment jobs would refuse fails the pull request instead of `main` or the production job after its approval. This gate prevents project installs and lifecycle scripts from running for invalid deployment configuration. Once it passes, independent jobs run the project's lint, format check, type check and tests, with tests optional when no `test` script exists. Deployment waits for every check to pass.
+
+Each script job installs the project's pinned pnpm and its dependencies from the frozen lockfile, using its cached store when available. The jobs share the check store, but only one writes it, so parallel checks do not race to save the same immutable cache. Each job keeps its own checkout and installed dependencies rather than passing project-writable executable files between jobs. Among the check jobs, only configuration validation loads the platform package. The contract with a project is the set of scripts, not their content. Even on a branch, project scripts run as a second user of the job, the same way as in the deployment job.
 
 ## The deployment job
 
@@ -134,7 +145,7 @@ Each rule above is a claim about what project code cannot do, and the `probe` jo
 
 | Failure | What is left |
 | --- | --- |
-| `checks` fails | Nothing deployed. The pull request shows the failing step. |
+| A check fails | Nothing deployed. The pull request shows the failing domain's job and step. |
 | Vault login fails | Nothing deployed. Either the identity binding rejects the ref, or the identity is not a member of the project. The step prints the Infisical error. |
 | Pulumi fails part way | The stack state records what was created. The next run converges, because the program is declarative. The lock is released when the process ends. |
 | A resource was deleted outside Pulumi, by hand or with the Worker it was attached to | The refresh that precedes every update drops it from the state, and the program recreates what it still declares. |
@@ -220,7 +231,7 @@ These are the facts that forced the decisions above. Each names where to look wh
 | Cloudflare offers no OIDC federation for its API. | An API token stays in the vault and is rotated. | Cloudflare API documentation. |
 | A shared temporary directory accepts a file from any user, and a path that exists is reused by the commands that create files and links. | After the project user exists, the platform writes under its own home only, in a directory that user cannot write, and recreates a program directory empty before loading anything from it. | POSIX semantics of the shared temporary directory, `mkdir -p` and `ln -s`. |
 | Wrangler reads `.env`, `.env.local` and the environment's dotenv files from its working directory into its own environment, for every command. | Wrangler runs from the platform's directory, never from the checkout, with an empty dotenv file named to it. | Wrangler source, the dotenv loading of its command line. |
-| CircleCI caches are shared by every branch of a project, and a key is written once. | The pnpm store cache is keyed by job kind: the deployment job restores only what a deployment job saved, so a branch's install never seeds a deployment's. | CircleCI documentation, caching. |
+| CircleCI caches are shared by every branch of a project, and a key is written once. | Check stores and each deployment environment's store use separate namespaces, so branches never seed deployment installs and development never restores production data. Parallel check jobs share one writer. Before archiving a store, the job ends project processes and refuses symbolic links, special files and traversal errors. Private files cannot be hard-linked into it because the job requires protected hard links before any project code. | CircleCI documentation, caching, and the probe job's process and hard-link checks. |
 | Wrangler reads whatever path its configuration names, absolute or above the configuration's directory, including the module root it walks for additional modules, and follows a symbolic link of the checkout wherever it points, as it is when read. | The read step refuses a path of the Wrangler keys that leaves the repository, and the upload reads only the platform's copy of the bundle and the assets, made once every process of the project has ended and refusing any link. The probe job plants each. | Wrangler documentation on configuration, the bundling page, and a dry run with a module root above the configuration's directory. |
 | Wrangler's bundler follows every import of the entry point, with the permissions of the user running it, and a module rule turns any file into a text module. | The bundle is written by a dry run as the project user and its copy uploaded as it is, with bundling off: the Wrangler that holds the credential reads the platform's copy, never an import. The probe job bundles an import of the platform's secrets both ways. | Wrangler documentation on bundling, and a dry run of an entry point that imports a file outside the checkout. |
 | A hard link to a file needs no permission on it unless the kernel's `fs.protected_hardlinks` is set, and a hard link is a plain file to every check but its link count. | The step that creates the project user refuses to go on without the setting, the copy for the upload refuses a file with several links, and the probe job tries both. | Linux kernel documentation on `fs.protected_hardlinks`. |

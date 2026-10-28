@@ -4,8 +4,6 @@
 # CI file: its pipeline definition points here and checks out its own repository.
 # The project supplies nextnode.toml, a pinned packageManager and its scripts.
 #
-#   checks       nextnode.toml for every environment, then lint, formatting, types,
-#                tests of the project. No context, no secret.
 #   deploy-dev   on main. Halts right after reading nextnode.toml when the project
 #                declares no development environment.
 #   hold         a person approves the production deployment in CircleCI.
@@ -167,31 +165,37 @@ commands:
             # The store layout follows the pnpm version, so the store cache is keyed by it too.
             echo "$pin" > /tmp/pnpm.txt
   pnpm-store:
-    description: Restore the pnpm store of this job kind, pnpm version and lockfile, so the project's install links instead of downloading. A job kind restores only what the same kind saved, so a branch never seeds a deployment's install.
+    description: Restore the pnpm store of this namespace, pnpm version and lockfile. Checks and each deployment environment use separate namespaces.
     parameters:
       kind:
-        type: enum
-        enum: [checks, deploy]
+        type: string
     steps:
       - restore_cache:
           keys:
-            - pnpm-<< parameters.kind >>-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
-            - pnpm-<< parameters.kind >>-{{ checksum "/tmp/pnpm.txt" }}-
+            - pnpm-v2-<< parameters.kind >>-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
+            - pnpm-v2-<< parameters.kind >>-{{ checksum "/tmp/pnpm.txt" }}-
   pnpm-install:
-    description: Install the project's dependencies from the frozen lockfile, as the project user, and save the store under this job kind and lockfile's key.
-    parameters:
-      kind:
-        type: enum
-        enum: [checks, deploy]
+    description: Install the project's dependencies from the frozen lockfile, as the project user.
     steps:
       - project-run:
           command: pnpm install --frozen-lockfile
+  pnpm-save-store:
+    description: Prune and save a store with project processes ended and no symbolic links or special files, under this namespace, pnpm version and lockfile's key.
+    parameters:
+      kind:
+        type: string
+    steps:
       - project-run:
           # A store restored from an older lockfile keeps every package it ever held. The
           # prune is paid on every run, a scan of the store, for a store that stays small.
           command: pnpm store prune
+      - end-project
+      - run:
+          name: Refuse symbolic links and special files in the pnpm store
+          command: |
+            unsupported_store_entry=$(find ~/.pnpm-store ! -type d ! -type f -printf x -quit) && [ -d ~/.pnpm-store ] && [ ! -L ~/.pnpm-store ] && [ -z "$unsupported_store_entry" ] || { echo "pnpm store must contain only regular files and directories"; exit 1; }
       - save_cache:
-          key: pnpm-<< parameters.kind >>-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
+          key: pnpm-v2-<< parameters.kind >>-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
           paths: [~/.pnpm-store]
   isolate-project:
     description: Create the project user, hand it the checkout, and end root access. Sudo then only becomes that user.
@@ -258,30 +262,54 @@ commands:
             exec env -i "${kept[@]}" sudo -nE -u project bash -eo pipefail -c 'umask 002; set -a; [ -f ~/app.env ] && . ~/app.env; set +a; << parameters.command >>'
 
 jobs:
-  checks:
+  check-configuration:
     executor: node
     environment:
       <<: *canary
     steps:
       - checkout
       - platform-package
-      # The deployment jobs read nextnode.toml only after the merge, and production only
-      # after the approval: every environment is read here, so a mistake fails the branch.
       - run: node /home/circleci/platform/infrastructure/platform/read.ts --repository "$CIRCLE_PROJECT_REPONAME" --check
+
+  check:
+    parameters:
+      command:
+        type: enum
+        enum:
+          - &lint-command pnpm lint
+          - &format-command pnpm format:check
+          - &types-command pnpm type-check
+          - &test-command pnpm run --if-present test
+      cache:
+        type: enum
+        enum: [read, write]
+        default: read
+    executor: node
+    steps:
+      - checkout
+      - when:
+          condition:
+            equal: [*test-command, << parameters.command >>]
+          steps:
+            - run:
+                name: Skip undeclared tests before installing dependencies
+                command: |
+                  if jq -e '(.scripts // {}) | has("test")' package.json > /dev/null; then exit 0; else status=$?; fi
+                  [ "$status" = 1 ] || exit "$status"
+                  circleci-agent step halt
       - install-pnpm
       - pnpm-store:
           kind: checks
       - isolate-project
-      - pnpm-install:
-          kind: checks
+      - pnpm-install
+      - when:
+          condition:
+            equal: [write, << parameters.cache >>]
+          steps:
+            - pnpm-save-store:
+                kind: checks
       - project-run:
-          command: pnpm lint
-      - project-run:
-          command: pnpm format:check
-      - project-run:
-          command: pnpm type-check
-      - project-run:
-          command: pnpm run --if-present test
+          command: << parameters.command >>
 
   deploy:
     parameters:
@@ -304,7 +332,7 @@ jobs:
       - platform-tools
       - install-pnpm
       - pnpm-store:
-          kind: deploy
+          kind: &deployment-store deploy-<< parameters.environment >>
       - isolate-project
       - run:
           name: Fetch the secrets of << parameters.environment >>
@@ -323,8 +351,9 @@ jobs:
             application=$(INFISICAL_TOKEN=$token node /home/circleci/platform/infrastructure/platform/vault-project.ts --name "$(nn nextnode project)")
             echo -n "application ($application): "; export_project "$application" "$NEXTNODE_ENVIRONMENT" | sudo -nu project sh -c 'umask 077; cat > /home/project/app.env'
       - forget-job-token
-      - pnpm-install:
-          kind: deploy
+      - pnpm-install
+      - pnpm-save-store:
+          kind: *deployment-store
       - project-run:
           command: pnpm build
       - project-run:
@@ -581,11 +610,28 @@ workflows:
   pipeline:
     unless: << pipeline.parameters.probe >>
     jobs:
-      - checks
+      - check-configuration
+      - check:
+          name: lint
+          command: *lint-command
+          requires: [check-configuration]
+      - check:
+          name: format
+          command: *format-command
+          cache: write
+          requires: [check-configuration]
+      - check:
+          name: types
+          command: *types-command
+          requires: [check-configuration]
+      - check:
+          name: tests
+          command: *test-command
+          requires: [check-configuration]
       - deploy:
           name: deploy-dev
           environment: development
-          requires: [checks]
+          requires: [lint, format, types, tests]
           filters: &main
             branches:
               only: main
