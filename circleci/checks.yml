@@ -172,30 +172,25 @@ commands:
     steps:
       - restore_cache:
           keys:
-            - pnpm-v2-<< parameters.kind >>-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
-            - pnpm-v2-<< parameters.kind >>-{{ checksum "/tmp/pnpm.txt" }}-
+            - pnpm-v3-<< parameters.kind >>-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
   pnpm-install:
     description: Install the project's dependencies from the frozen lockfile, as the project user.
     steps:
       - project-run:
           command: pnpm install --frozen-lockfile
   pnpm-save-store:
-    description: Prune and save a store with project processes ended and no symbolic links or special files, under this namespace, pnpm version and lockfile's key.
+    description: Save the installed packages with project processes ended and no symbolic links or special files, under this namespace, pnpm version and lockfile's exact key.
     parameters:
       kind:
         type: string
     steps:
-      - project-run:
-          # A store restored from an older lockfile keeps every package it ever held. The
-          # prune is paid on every run, a scan of the store, for a store that stays small.
-          command: pnpm store prune
       - end-project
       - run:
           name: Refuse symbolic links and special files in the pnpm store
           command: |
             unsupported_store_entry=$(find ~/.pnpm-store ! -type d ! -type f -printf x -quit) && [ -d ~/.pnpm-store ] && [ ! -L ~/.pnpm-store ] && [ -z "$unsupported_store_entry" ] || { echo "pnpm store must contain only regular files and directories"; exit 1; }
       - save_cache:
-          key: pnpm-v2-<< parameters.kind >>-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
+          key: pnpm-v3-<< parameters.kind >>-{{ checksum "/tmp/pnpm.txt" }}-{{ checksum "pnpm-lock.yaml" }}
           paths: [~/.pnpm-store]
   isolate-project:
     description: Create the project user, hand it the checkout, and end root access. Sudo then only becomes that user.
