@@ -7,26 +7,121 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  discover:
+    name: Discover
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      node: ${{ steps.toolchain.outputs.node }}
+      checks: ${{ steps.select.outputs.checks || '[]' }}
+      builds: ${{ steps.select.outputs.builds || '[]' }}
+      executor: ${{ steps.select.outputs.executor }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+          filter: blob:none
+      - name: Resolve the toolchain
+        id: toolchain
+        run: |
+          set -euo pipefail
+          if [ ! -f package.json ]; then
+            echo "project=false" >> "$GITHUB_OUTPUT"
+            echo "Nothing to check: the repository root holds no package.json." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          PACKAGE_MANAGER=$(jq -r '.packageManager // empty' package.json)
+          case "$PACKAGE_MANAGER" in
+            pnpm@[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error file=package.json::packageManager must pin pnpm as pnpm@X.Y.Z"; exit 1 ;;
+          esac
+          NODE_RANGE=$(jq -r '.engines.node // empty' package.json)
+          NODE_MAJOR=$(sed -E 's/^[^0-9]*([0-9]+).*/\1/' <<<"$NODE_RANGE")
+          case "$NODE_MAJOR" in
+            [0-9]*) ;;
+            *) echo "::error file=package.json::engines.node must name the Node major"; exit 1 ;;
+          esac
+          echo "project=true" >> "$GITHUB_OUTPUT"
+          echo "node=$NODE_MAJOR" >> "$GITHUB_OUTPUT"
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        if: steps.toolchain.outputs.project == 'true'
+      - name: Select packages and checks
+        id: select
+        if: steps.toolchain.outputs.project == 'true'
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          ROOT_FILES=(package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.json turbo.json .npmrc)
+          FILTER=()
+          if [ -f pnpm-workspace.yaml ]; then
+            EXECUTOR=pnpm
+            [ -f turbo.json ] && EXECUTOR=turbo
+            if [ "$EVENT" = pull_request ]; then
+              BASE=$(git merge-base "origin/$BASE_REF" HEAD)
+              if [ -n "$(git diff --name-only "$BASE" HEAD -- "${ROOT_FILES[@]}")" ]; then
+                SELECTION="every package, because a root file changed"
+              else
+                FILTER=(--filter "...[$BASE]" --changed-files-ignore-pattern '**/*.md' --test-pattern '**/*.{test,spec}.*')
+                SELECTION="packages changed since the base and their dependents"
+              fi
+            else
+              SELECTION="every package, because there is no base to compare with"
+            fi
+            PACKAGES=$(pnpm -r "${FILTER[@]+"${FILTER[@]}"}" ls --depth -1 --json | jq -c --arg root "$PWD" "map(select(.path != \$root))")
+          else
+            EXECUTOR=single
+            SELECTION="the single package"
+            PACKAGES=$(pnpm ls --depth -1 --json)
+          fi
+          LABELS='{"lint":"Lint","type-check":"TypeScript","test:unit":"Unit tests","test:integration":"Integration tests","test:e2e":"End-to-end tests"}'
+          CHECKS='[]'
+          BUILDS='[]'
+          SUMMARY=""
+          while IFS=$'\t' read -r NAME PACKAGE_PATH; do
+            DIR=${PACKAGE_PATH#"$PWD"}
+            DIR=${DIR#/}
+            DIR=${DIR:-.}
+            SCRIPTS=$(jq -c '[.scripts // {} | keys[]]' "$PACKAGE_PATH/package.json")
+            CHECKS=$(jq -c --arg name "$NAME" --arg dir "$DIR" --arg executor "$EXECUTOR" --argjson scripts "$SCRIPTS" --argjson labels "$LABELS" '
+              . + [ $labels | to_entries[] | select(.key as $k | $scripts | index($k))
+                    | { package: $name, dir: $dir, script: .key, executor: $executor,
+                        name: (if $executor == "single" then .value else "\(.value) (\($name))" end) } ]' <<<"$CHECKS")
+            if jq -e 'index("build")' <<<"$SCRIPTS" >/dev/null; then
+              BUILDS=$(jq -c --arg name "$NAME" '. + [$name]' <<<"$BUILDS")
+            fi
+            SUMMARY+="| \`$NAME\` | \`$DIR\` | $(jq -r --argjson labels "$LABELS" '[.[] | select(. as $s | $labels | has($s)) ] + (if index("build") then ["build"] else [] end) | join(", ")' <<<"$SCRIPTS") |"$'\n'
+          done < <(jq -r '.[] | [.name, .path] | @tsv' <<<"$PACKAGES")
+          {
+            echo "Selected $SELECTION. Executor: $EXECUTOR."
+            echo
+            echo "| Package | Directory | Checks |"
+            echo "| --- | --- | --- |"
+            printf '%s' "$SUMMARY"
+          } >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "checks=$CHECKS"
+            echo "builds=$BUILDS"
+            echo "executor=$EXECUTOR"
+          } >> "$GITHUB_OUTPUT"
+
   check:
     name: ${{ matrix.name }}
+    needs: discover
+    if: needs.discover.outputs.checks != '[]'
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - name: Lint
-            script: lint
-          - name: Unit tests
-            script: test:unit
-          - name: Integration tests
-            script: test:integration
-            optional: true
-          - name: End-to-end tests
-            script: test:e2e
-            optional: true
-          - name: TypeScript
-            script: type-check
+        include: ${{ fromJSON(needs.discover.outputs.checks) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -34,19 +129,32 @@ jobs:
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: ${{ needs.discover.outputs.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: ${{ matrix.name }}
         env:
+          PACKAGE: ${{ matrix.package }}
           SCRIPT: ${{ matrix.script }}
-          OPTIONAL: ${{ matrix.optional && '1' || '' }}
-        run: pnpm run ${OPTIONAL:+--if-present} "$SCRIPT"
+          EXECUTOR: ${{ matrix.executor }}
+        run: |
+          set -euo pipefail
+          case "$EXECUTOR" in
+            single)
+              pnpm run "$SCRIPT" ;;
+            pnpm)
+              pnpm -r --filter "${PACKAGE}^..." run build --if-present
+              pnpm -r --filter "$PACKAGE" run "$SCRIPT" ;;
+            turbo)
+              pnpm exec turbo run "$SCRIPT" --filter="$PACKAGE" ;;
+          esac
 
   build:
     name: Build
-    needs: check
+    needs: [discover, check]
+    if: ${{ !cancelled() && needs.discover.outputs.builds != '[]' && (needs.check.result == 'success' || needs.check.result == 'skipped') }}
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -54,7 +162,22 @@ jobs:
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 24
+          node-version: ${{ needs.discover.outputs.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
+      - name: Build
+        env:
+          BUILDS: ${{ needs.discover.outputs.builds }}
+          EXECUTOR: ${{ needs.discover.outputs.executor }}
+        run: |
+          set -euo pipefail
+          case "$EXECUTOR" in
+            single)
+              pnpm run build ;;
+            pnpm)
+              mapfile -t FILTERS < <(jq -r '.[] | "--filter=\(.)..."' <<<"$BUILDS")
+              pnpm -r "${FILTERS[@]}" run build --if-present ;;
+            turbo)
+              mapfile -t FILTERS < <(jq -r '.[] | "--filter=\(.)"' <<<"$BUILDS")
+              pnpm exec turbo run build "${FILTERS[@]}" ;;
+          esac
