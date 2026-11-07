@@ -103,4 +103,4 @@ The organization ruleset "Checks required on pull requests" names the repositori
 
 ## Testing a change
 
-A change to the workflow is tested on the canary repository before it reaches `main`: the ruleset entry can point at a branch of this repository, and a pull request on the canary shows the result. The rules for a change are in [AGENTS.md](AGENTS.md).
+A change to the workflow is tested on the canary repositories before it reaches `main`: the ruleset entry can point at a branch of this repository, and a pull request on each canary shows the result. One canary is a single package, the other a pnpm workspace, so both shapes of the workflow run. The rules for a change are in [AGENTS.md](AGENTS.md).

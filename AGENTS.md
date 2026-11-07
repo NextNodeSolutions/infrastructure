@@ -38,7 +38,7 @@ The token is never written into the checkout (`persist-credentials` is off) and 
 
 ## Checks
 
-A change to the workflow is tested on the canary before it merges: point the ruleset's workflow entry at the branch, open a pull request on the canary, cite the run in this repository's pull request, then point the ruleset back at `main`. The canary is a single package; the workspace paths are tested by running the discovery scripts locally against a scratch workspace and reading the outputs they write.
+A change to the workflow is tested on the canaries before it merges: point the ruleset's workflow entry at the branch, open a pull request on each canary, cite the runs in this repository's pull request, then point the ruleset back at `main`. Two canaries exist because the workflow has two shapes: `canary` is a single package, `canary-workspace` is a pnpm workspace whose shared package feeds an app, so a pull request there shows the selection and the prerequisite build. A pull request on the workspace canary that changes one app must select that app alone; one that changes the shared package must select it and the app.
 
 ## Commits
 
