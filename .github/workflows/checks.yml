@@ -143,7 +143,7 @@ jobs:
             single)
               pnpm run "$SCRIPT" ;;
             pnpm)
-              pnpm -r --filter "${PACKAGE}^..." run build --if-present
+              pnpm -r --if-present --filter "${PACKAGE}^..." run build
               pnpm -r --filter "$PACKAGE" run "$SCRIPT" ;;
             turbo)
               pnpm exec turbo run "$SCRIPT" --filter="$PACKAGE" ;;
@@ -176,7 +176,7 @@ jobs:
               pnpm run build ;;
             pnpm)
               mapfile -t FILTERS < <(jq -r '.[] | "--filter=\(.)..."' <<<"$BUILDS")
-              pnpm -r "${FILTERS[@]}" run build --if-present ;;
+              pnpm -r --if-present "${FILTERS[@]}" run build ;;
             turbo)
               mapfile -t FILTERS < <(jq -r '.[] | "--filter=\(.)"' <<<"$BUILDS")
               pnpm exec turbo run build "${FILTERS[@]}" ;;
