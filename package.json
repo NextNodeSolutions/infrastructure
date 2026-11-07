@@ -1,0 +1,30 @@
+{
+  "name": "@nextnode-solutions/infrastructure",
+  "version": "0.0.0",
+  "description": "The program behind the Checks workflow: it reads the repository it runs in and runs what that repository declares.",
+  "scripts": {
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint",
+    "prepare": "node .husky/install.mjs",
+    "type-check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "21.2.4",
+    "@commitlint/config-conventional": "21.2.4",
+    "@nextnode-solutions/standards": "1.27.1",
+    "@types/node": "24.19.2",
+    "better-sort-package-json": "1.1.1",
+    "husky": "9.1.7",
+    "lint-staged": "17.6.0",
+    "oxfmt": "0.77.0",
+    "oxlint": "1.92.0",
+    "typescript": "7.0.2"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "private": true,
+  "packageManager": "pnpm@10.11.0",
+  "type": "module"
+}
