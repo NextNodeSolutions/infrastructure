@@ -135,6 +135,8 @@ Before provisioning or uploading, the release reserves each Worker, hostname, da
 
 Claims remain after a failed release or a removed binding. Reassigning a name requires a separate owner-approved operation, not an edit of `nextnode.toml`. These claims coordinate this pipeline, not manual account changes or other deployment systems.
 
+Renaming the repository or a package renames its deployables, because every name derives from them. The next release deploys a new Worker, stack, databases and buckets beside the old ones, which keep serving and keep their data until a person deletes them. A declared domain stays reserved to the old Worker, so the release refuses it until that owner-approved operation moves it.
+
 A deployment is done when what was deployed answers. Any answer below a client error counts, a redirect included, and a hostname attached for the first time is given the time its certificate takes.
 
 ### Publishing a package
