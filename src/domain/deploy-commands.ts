@@ -2,7 +2,7 @@ import { hasBuildScript } from './checks.ts'
 import { buildCommands, pnpm } from './commands.ts'
 
 import type { Command } from './commands.ts'
-import type { PackageAccess } from './declaration.ts'
+import type { Declaration, PackageAccess } from './declaration.ts'
 import type { DeployEntry } from './deployable.ts'
 
 // What a job installs of the program's own dependencies. Reading a nextnode.toml takes
@@ -23,6 +23,17 @@ const INSTALL_PROFILES: Record<InstallProfile, Command> = {
 
 export function programInstall(profile: InstallProfile): Command {
 	return INSTALL_PROFILES[profile]
+}
+
+// A job installs once, by the kind it was asked for: a profile installed after another
+// makes pnpm discard the first and install everything again.
+const PROFILE_OF_KIND: Record<Declaration['kind'], InstallProfile> = {
+	worker: 'deploying',
+	package: 'parsing',
+}
+
+export function installProfileOf(kind: Declaration['kind']): InstallProfile {
+	return PROFILE_OF_KIND[kind]
 }
 
 // The build of one deployable, through the same executor table the checks build with.

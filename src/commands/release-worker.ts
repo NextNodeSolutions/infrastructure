@@ -3,7 +3,6 @@ import { accountOf, tagWorker } from '../adapters/cloudflare.ts'
 import { inGroup } from '../adapters/github.ts'
 import { waitUntilHealthy } from '../adapters/health.ts'
 import { runInOrder, stream } from '../adapters/processes.ts'
-import { installDependencies } from '../adapters/program-install.ts'
 import { converge } from '../adapters/pulumi.ts'
 import { platformCredentials } from '../adapters/vault.ts'
 import { prepareWrangler, readUpload } from '../adapters/wrangler.ts'
@@ -38,7 +37,6 @@ export async function releaseWorker(
 	context: ReleaseContext,
 ): Promise<Released> {
 	const { deployable, resources: plan } = subject
-	await installDependencies(context.root, 'deploying')
 	const credentials = await platformCredentials(context.identity)
 	const account = accountOf(credentials)
 	const { tags, backend } = await claimWorker(account, {

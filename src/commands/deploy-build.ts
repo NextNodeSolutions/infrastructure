@@ -17,7 +17,12 @@ import { programRoot } from '../adapters/relocation.ts'
 import { prepareWrangler } from '../adapters/wrangler.ts'
 import { ARTIFACT, migrationsOf } from '../domain/artifact.ts'
 import { INSTALL } from '../domain/commands.ts'
-import { bundle, deployableBuild, pack } from '../domain/deploy-commands.ts'
+import {
+	bundle,
+	deployableBuild,
+	installProfileOf,
+	pack,
+} from '../domain/deploy-commands.ts'
 import { bundlingConfig } from '../domain/wrangler-config.ts'
 
 import { artifactDirectory, requestedDeployable } from './deploy-job.ts'
@@ -38,7 +43,7 @@ export async function deployBuild(): Promise<void> {
 	const entry = requestedDeployable()
 	const artifact = artifactDirectory(project)
 	const root = programRoot()
-	await installDependencies(root, 'parsing')
+	await installDependencies(root, installProfileOf(entry.kind))
 	const subject = await readSubject(
 		project,
 		readPullRequestEvent().repository,
@@ -93,7 +98,6 @@ async function bundleWorker(
 	declaration: WorkerDeclaration,
 ): Promise<void> {
 	if (!declaration.main) return
-	await installDependencies(staging.programRoot, 'deploying')
 	const wrangler = prepareWrangler(
 		staging.programRoot,
 		scratchDirectory('wrangler'),

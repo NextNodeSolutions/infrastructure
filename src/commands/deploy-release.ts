@@ -1,8 +1,7 @@
 import { refuseAnythingButFiles } from '../adapters/artifact-files.ts'
 import { requiredVariable } from '../adapters/environment.ts'
 import { readPullRequestEvent } from '../adapters/event.ts'
-import { parseJson } from '../adapters/files.ts'
-import { branchTip, readFileAt, takeGitHub } from '../adapters/github-api.ts'
+import { branchTip, takeGitHub } from '../adapters/github-api.ts'
 import {
 	createDeployment,
 	reportDeployment,
@@ -11,23 +10,19 @@ import { writeSummary } from '../adapters/github.ts'
 import { installDependencies } from '../adapters/program-install.ts'
 import { programRoot } from '../adapters/relocation.ts'
 import { takeRunIdentity } from '../adapters/run-identity.ts'
-import { parseToml } from '../adapters/toml.ts'
+import { installProfileOf } from '../domain/deploy-commands.ts'
 import { short } from '../domain/deploy-selection.ts'
 import { renderFailure, renderReleased } from '../domain/deploy-summary.ts'
-import { declarationFile } from '../domain/deployable.ts'
-import { manifestFile } from '../domain/manifest.ts'
 import { refuseUnlessStanding } from '../domain/occasion.ts'
-import { subjectOf } from '../domain/subject.ts'
 
 import { artifactDirectory, requestedDeployable } from './deploy-job.ts'
 import { releasePackage } from './release-package.ts'
+import { committedSubject } from './release-subject.ts'
 import { releaseWorker } from './release-worker.ts'
 
 import type { GitHub } from '../adapters/github-api.ts'
 import type { DeploymentStatus } from '../adapters/github-deployments.ts'
 import type { Released } from '../domain/deploy-summary.ts'
-import type { PullRequestEvent } from '../domain/occasion.ts'
-import type { Subject } from '../domain/subject.ts'
 
 // The job that holds the credentials. It runs nothing of the project and checks out
 // nothing of it: it takes the directory it is asked to release as a request, reads that
@@ -46,14 +41,9 @@ export async function deployRelease(): Promise<void> {
 		{ name: requested.name, commit: event.headSha },
 		event.defaultBranch,
 	)
-	await installDependencies(root, 'parsing')
-	const subject = await committedSubject(api, event, requested.directory)
+	await installDependencies(root, installProfileOf(requested.kind))
+	const subject = await committedSubject(api, event, requested)
 	const { name } = subject.deployable
-	if (name !== requested.name) {
-		throw new Error(
-			`The commit deploys ${requested.directory} as ${name}, and this job was asked for ${requested.name}`,
-		)
-	}
 	const artifact = artifactDirectory(workspace)
 	refuseAnythingButFiles(artifact)
 	const context = {
@@ -70,23 +60,6 @@ export async function deployRelease(): Promise<void> {
 			? releasePackage(subject, declaration, context)
 			: releaseWorker(subject, declaration, context),
 	)
-}
-
-async function committedSubject(
-	api: GitHub,
-	event: PullRequestEvent,
-	directory: string,
-): Promise<Subject> {
-	const file = declarationFile(directory)
-	const manifest = manifestFile(directory)
-	const [tomlText, manifestText] = await Promise.all([
-		readFileAt(api, file, event.headSha),
-		readFileAt(api, manifest, event.headSha),
-	])
-	return subjectOf(event.repository, directory, {
-		toml: await parseToml(tomlText, file),
-		manifest: parseJson(manifestText, manifest),
-	})
 }
 
 type Recorded = {
