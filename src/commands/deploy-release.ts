@@ -80,7 +80,7 @@ async function refuseStale(
 	const { commit: current } = await branchTip(api, branch)
 	if (current === commit) return
 	const cause = `${name}: this run holds ${short(commit)}, but ${branch} now holds ${short(current)}. Run the latest deployment instead; this run releases nothing`
-	writeSummary(renderFailure(name, cause))
+	writeSummary(renderFailure('release', name, cause))
 	throw new Error(cause)
 }
 
@@ -116,7 +116,7 @@ async function recorded(
 	} catch (failure: unknown) {
 		const cause = causeOf(failure)
 		await report({ state: 'failure', description: cause, url: undefined })
-		writeSummary(renderFailure(name, cause))
+		writeSummary(renderFailure('release', name, cause))
 		throw failure
 	}
 }

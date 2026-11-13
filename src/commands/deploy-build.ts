@@ -25,7 +25,7 @@ import {
 	pack,
 } from '../domain/deploy-commands.ts'
 import {
-	renderBuildFailure,
+	renderFailure,
 	renderBuilt,
 	stagedWorker,
 } from '../domain/deploy-summary.ts'
@@ -54,7 +54,7 @@ export async function deployBuild(): Promise<void> {
 	try {
 		writeSummary(renderBuilt(entry.name, await buildAndStage(entry)))
 	} catch (failure: unknown) {
-		writeSummary(renderBuildFailure(entry.name, causeOf(failure)))
+		writeSummary(renderFailure('build', entry.name, causeOf(failure)))
 		throw failure
 	}
 }

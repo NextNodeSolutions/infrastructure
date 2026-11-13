@@ -1,4 +1,5 @@
 import { short } from './deploy-selection.ts'
+import { markdownTable } from './markdown-table.ts'
 
 import type { WorkerDeclaration } from './declaration.ts'
 import type { Standing } from './deploy-outputs.ts'
@@ -37,16 +38,20 @@ const STANDING_NOTES: Record<Standing, readonly string[]> = {
 }
 
 function render(heading: string, plan: Plan, notes: readonly string[]): string {
-	const rows = plan.rows.map(
-		({ deployable, verdict }) =>
-			`| \`${deployable.name}\` | ${deployable.kind} | \`${deployable.directory}\` | ${verdict.deploys ? 'yes' : 'no'} | ${verdict.reason} |`,
-	)
+	const rows = plan.rows.map(({ deployable, verdict }) => [
+		`\`${deployable.name}\``,
+		deployable.kind,
+		`\`${deployable.directory}\``,
+		verdict.deploys ? 'yes' : 'no',
+		verdict.reason,
+	])
 	return [
 		heading,
 		'',
-		'| Deployable | Kind | Directory | Deploys | Why |',
-		'| --- | --- | --- | --- | --- |',
-		...rows,
+		...markdownTable(
+			['Deployable', 'Kind', 'Directory', 'Deploys', 'Why'],
+			rows,
+		),
 		'',
 		...notes,
 		`Deploy program at \`${plan.programRevision}\`.`,
@@ -75,14 +80,7 @@ export type Released = {
 }
 
 function renderFacts(heading: string, facts: readonly Fact[]): string {
-	return [
-		heading,
-		'',
-		'| | |',
-		'| --- | --- |',
-		...facts.map(([label, value]) => `| ${label} | ${value} |`),
-		'',
-	].join('\n')
+	return [heading, '', ...markdownTable(['', ''], facts), ''].join('\n')
 }
 
 export function renderReleased(released: Released): string {
@@ -120,24 +118,24 @@ export function renderBuilt(name: string, staged: readonly Fact[]): string {
 	].join('\n')
 }
 
-export function renderBuildFailure(name: string, cause: string): string {
-	return [
-		`### \`${name}\` was not built`,
-		'',
-		cause,
-		'',
-		'This run releases nothing of it, and the other deployables go on. Fix the build and merge the fix, or re-run the failed jobs of this run when the cause was transient.',
-		'',
-	].join('\n')
+export type FailedJob = 'build' | 'release'
+
+const FAILURES: Record<FailedJob, { outcome: string; next: string }> = {
+	build: {
+		outcome: 'was not built',
+		next: 'This run releases nothing of it, and the other deployables go on. Fix the build and merge the fix, or re-run the failed jobs of this run when the cause was transient.',
+	},
+	release: {
+		outcome: 'was not deployed',
+		next: 'The last deployment that succeeded stays the baseline. Fix the cause and merge the fix, or re-run the failed jobs of this run: both deploy everything since that deployment.',
+	},
 }
 
-export function renderFailure(name: string, cause: string): string {
-	return [
-		`### \`${name}\` was not deployed`,
-		'',
-		cause,
-		'',
-		'The last deployment that succeeded stays the baseline. Fix the cause and merge the fix, or re-run the failed jobs of this run: both deploy everything since that deployment.',
-		'',
-	].join('\n')
+export function renderFailure(
+	job: FailedJob,
+	name: string,
+	cause: string,
+): string {
+	const { outcome, next } = FAILURES[job]
+	return [`### \`${name}\` ${outcome}`, '', cause, '', next, ''].join('\n')
 }
