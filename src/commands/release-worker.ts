@@ -43,14 +43,14 @@ export async function releaseWorker(
 	const credentials = await platformCredentials(context.identity)
 	const account = accountOf(credentials)
 	const { tags, backend } = await claimWorker(account, {
-		repository: context.repository,
-		repositoryId: context.repositoryId,
+		repository: context.event.repository,
+		repositoryId: context.event.repositoryId,
 		deployable,
 		declaration,
 		plan,
 	})
 	const provisioned = await provision(
-		{ project: context.repository, stack: deployable.name, backend },
+		{ project: context.event.repository, stack: deployable.name, backend },
 		plan,
 		{ credentials, account },
 	)
@@ -73,7 +73,7 @@ export async function releaseWorker(
 		url,
 		facts: [
 			['Address', url],
-			['Commit', `\`${short(context.commit)}\``],
+			['Commit', `\`${short(context.event.headSha)}\``],
 			['Version', `\`${uploaded.version}\``],
 			['Health', `\`${declaration.healthPath}\` answered HTTP ${status}`],
 			...resourceFacts(plan),
@@ -122,7 +122,11 @@ async function uploadRelease(
 	)
 	await inGroup('Upload the Worker', () =>
 		stream(
-			upload(wrangler.program, wrangler.config, short(context.commit)),
+			upload(
+				wrangler.program,
+				wrangler.config,
+				short(context.event.headSha),
+			),
 			wrangler.directory,
 			wrangler.environment,
 		),

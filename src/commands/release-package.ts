@@ -66,7 +66,7 @@ async function signed(
 	context: ReleaseContext,
 	scratch: string,
 ): Promise<Provenance | undefined> {
-	if (!hasProvenance(context.visibility)) return undefined
+	if (!hasProvenance(context.event.visibility)) return undefined
 	return inGroup('Sign the provenance', () =>
 		signProvenance(tarball, published, context.identity, scratch),
 	)
@@ -121,7 +121,7 @@ export async function releasePackage(
 			['Package', `\`${published.name}@${published.version}\``],
 			['Page', url],
 			['Tag', `\`${tag}\``],
-			['Commit', `\`${short(context.commit)}\``],
+			['Commit', `\`${short(context.event.headSha)}\``],
 			['Registry', visibility],
 			['Provenance', provenanceFact(provenance)],
 		],

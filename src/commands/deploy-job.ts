@@ -5,19 +5,16 @@ import { decodeDeployEntry } from '../domain/deployable.ts'
 
 import type { RunIdentity } from '../adapters/run-identity.ts'
 import type { DeployEntry } from '../domain/deployable.ts'
-import type { Visibility } from '../domain/occasion.ts'
+import type { PullRequestEvent } from '../domain/occasion.ts'
 
 const DEPLOYABLE = 'DEPLOYABLE'
 const ARTIFACT_DIRECTORY = 'ARTIFACT'
 
 export type ReleaseContext = {
-	readonly repository: string
-	readonly repositoryId: string
-	readonly visibility: Visibility
+	readonly event: PullRequestEvent
 	readonly root: string
 	readonly artifact: string
 	readonly identity: RunIdentity
-	readonly commit: string
 }
 
 export function requestedDeployable(): DeployEntry {

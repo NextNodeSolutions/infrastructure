@@ -48,15 +48,7 @@ export async function deployRelease(): Promise<void> {
 	const { name } = subject.deployable
 	const artifact = artifactDirectory(workspace)
 	refuseAnythingButFiles(artifact)
-	const context = {
-		repository: event.repository,
-		repositoryId: event.repositoryId,
-		visibility: event.visibility,
-		root,
-		artifact,
-		identity,
-		commit: event.headSha,
-	}
+	const context = { event, root, artifact, identity }
 	const { declaration } = subject
 	await recorded(api, { name, commit: event.headSha }, () =>
 		declaration.kind === 'package'
