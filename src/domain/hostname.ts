@@ -13,6 +13,10 @@ export type HostnameClaim = {
 	readonly recordTypes: readonly string[]
 }
 
+// The records that answer for a hostname, which a Worker's domain replaces. Mail,
+// verification and certificate records stay beside a Worker.
+const ADDRESS_RECORDS: ReadonlySet<string> = new Set(['A', 'AAAA', 'CNAME'])
+
 // The zone is the longest registered name of the account that the hostname belongs to.
 export function zoneFor(
 	hostname: string,
@@ -44,10 +48,13 @@ export function refuseTakenHostname(claim: HostnameClaim, file: string): void {
 			`${file}: no zone of the Cloudflare account holds ${hostname}. Choose a domain under a zone of the account`,
 		)
 	}
-	if (claim.recordTypes.length) {
+	const answering = claim.recordTypes.filter(type =>
+		ADDRESS_RECORDS.has(type),
+	)
+	if (answering.length) {
 		throw new Refusal(
 			file,
-			`${file}: ${hostname} already has a DNS record (${claim.recordTypes.join(', ')}). Choose another domain, or delete the record in Cloudflare first`,
+			`${file}: ${hostname} already has an address record (${answering.join(', ')}). Choose another domain, or delete the record in Cloudflare first`,
 		)
 	}
 }

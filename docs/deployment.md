@@ -235,7 +235,7 @@ The Cloudflare token reaches the whole account, so the program is what confines 
 
 - **A file names no resource.** It has no key for a Worker name, an account, a database id or a bucket name. The program derives every name from the repository and the package.
 - **A Worker carries the repository that deploys it**, as a tag, and a release uploads over no Worker that carries another repository's. Two repositories can derive the same name, and the account has one namespace for all of them. A Worker made before the pipeline carries no tag and is taken by the first release to its name.
-- **A hostname is taken only when nothing holds it**: no other Worker and no DNS record, in a zone of the account.
+- **A hostname is taken only when nothing holds it**: no other Worker and no A, AAAA or CNAME record, in a zone of the account. Mail and verification records stay beside the Worker.
 - **Names are reserved before account changes.** Create-only R2 records bind Worker, hostname, database and bucket names to an immutable repository id and deployable. Reservations do not expire, so a slow release cannot lose its reservation to another project.
 - **A tarball is published only as the package and version the commit declares.**
 
