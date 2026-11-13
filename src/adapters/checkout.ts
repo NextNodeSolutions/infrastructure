@@ -5,14 +5,12 @@ import { NEXTNODE_FILE } from '../domain/declaration.ts'
 import { declarationFile } from '../domain/deployable.ts'
 import { ROOT_DIRECTORY } from '../domain/directory.ts'
 import { executorFor, TURBO_FILE, WORKSPACE_FILE } from '../domain/executor.ts'
-import { manifestFile } from '../domain/manifest.ts'
 import { refusal } from '../domain/refusal.ts'
-import { subjectOf } from '../domain/subject.ts'
 import { readToolchain } from '../domain/toolchain.ts'
 
-import { hasFile, readJsonFile, readManifest } from './files.ts'
+import { hasFile, readManifest } from './files.ts'
 import { listWorkspace } from './pnpm.ts'
-import { parseToml } from './toml.ts'
+import { subjectFrom } from './subject-reader.ts'
 
 import type { Executor } from '../domain/executor.ts'
 import type { Manifest } from '../domain/manifest.ts'
@@ -61,16 +59,12 @@ export async function declaringDirectories(
 		.filter(directory => hasFile(join(project, declarationFile(directory))))
 }
 
-// One deployable as the checkout holds it: its nextnode.toml and the package.json beside.
-export async function readSubject(
+export function readSubject(
 	project: string,
 	repository: string,
 	directory: string,
 ): Promise<Subject> {
-	const file = declarationFile(directory)
-	const manifest = manifestFile(directory)
-	return subjectOf(repository, directory, {
-		toml: await parseToml(readFileSync(join(project, file), 'utf8'), file),
-		manifest: readJsonFile(join(project, manifest), manifest),
-	})
+	return subjectFrom(repository, directory, file =>
+		Promise.resolve(readFileSync(join(project, file), 'utf8')),
+	)
 }

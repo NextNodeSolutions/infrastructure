@@ -1,9 +1,5 @@
-import { parseJson } from '../adapters/files.ts'
 import { readFileAt } from '../adapters/github-api.ts'
-import { parseToml } from '../adapters/toml.ts'
-import { declarationFile } from '../domain/deployable.ts'
-import { manifestFile } from '../domain/manifest.ts'
-import { subjectOf } from '../domain/subject.ts'
+import { subjectFrom } from '../adapters/subject-reader.ts'
 
 import type { GitHub } from '../adapters/github-api.ts'
 import type { DeployEntry } from '../domain/deployable.ts'
@@ -19,16 +15,9 @@ export async function committedSubject(
 	requested: DeployEntry,
 ): Promise<Subject> {
 	const { directory } = requested
-	const file = declarationFile(directory)
-	const manifest = manifestFile(directory)
-	const [tomlText, manifestText] = await Promise.all([
+	const subject = await subjectFrom(event.repository, directory, file =>
 		readFileAt(api, file, event.headSha),
-		readFileAt(api, manifest, event.headSha),
-	])
-	const subject = subjectOf(event.repository, directory, {
-		toml: await parseToml(tomlText, file),
-		manifest: parseJson(manifestText, manifest),
-	})
+	)
 	const { name, kind } = subject.deployable
 	if (name === requested.name && kind === requested.kind) return subject
 	throw new Error(
