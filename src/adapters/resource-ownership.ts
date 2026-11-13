@@ -1,7 +1,7 @@
 import { decoder } from '../domain/decode.ts'
 import { refusal } from '../domain/refusal.ts'
 
-import { fieldsOf, isSuccess, NOT_FOUND, send } from './http.ts'
+import { encodePath, fieldsOf, isSuccess, NOT_FOUND, send } from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
 import type { Ownership } from '../domain/ownership.ts'
@@ -19,8 +19,7 @@ async function request(
 ): Promise<Reply> {
 	const { AwsClient } = await import('aws4fetch')
 	const signer = new AwsClient({ ...backend.keys, service: 's3' })
-	const encoded = key.split('/').map(encodeURIComponent).join('/')
-	const url = new URL(`ownership/${encoded}`, backend.objectEndpoint)
+	const url = new URL(`ownership/${encodePath(key)}`, backend.objectEndpoint)
 	const headers = new Headers({ 'content-type': 'application/json' })
 	if (record) headers.set('if-none-match', '*')
 	const signed = await signer.sign(url, {

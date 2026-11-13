@@ -1,7 +1,14 @@
 import { decoder } from '../domain/decode.ts'
 
 import { takeVariable } from './environment.ts'
-import { fieldsOf, isSuccess, messageOf, NOT_FOUND, send } from './http.ts'
+import {
+	encodePath,
+	fieldsOf,
+	isSuccess,
+	messageOf,
+	NOT_FOUND,
+	send,
+} from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
 import type { PullRequestEvent } from '../domain/occasion.ts'
@@ -103,9 +110,8 @@ export async function readFileAt(
 	path: string,
 	commit: string,
 ): Promise<string> {
-	const encoded = path.split('/').map(encodeURIComponent).join('/')
 	const reply = await api.get(
-		`/contents/${encoded}?ref=${encodeURIComponent(commit)}`,
+		`/contents/${encodePath(path)}?ref=${encodeURIComponent(commit)}`,
 		RAW_REPLY,
 	)
 	if (reply.status === NOT_FOUND)

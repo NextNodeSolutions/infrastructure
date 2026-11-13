@@ -41,6 +41,10 @@ export async function send(request: Request): Promise<Reply> {
 	return { status: response.status, text: await response.text() }
 }
 
+export function encodePath(path: string): string {
+	return path.split('/').map(encodeURIComponent).join('/')
+}
+
 export function isSuccess(reply: Reply): boolean {
 	return reply.status >= FIRST_SUCCESS && reply.status < FIRST_REDIRECT
 }
