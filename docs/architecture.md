@@ -79,12 +79,12 @@ sequenceDiagram
             P->>N: run pnpm at the declared version, listing the selected packages
             P->>R: read the manifest of each selected package
         end
-        P->>G: outputs with the Node major, the executor, the matrix and the build plan
+        P->>G: outputs with the Node major, the matrix and the build plan
         P->>G: summary with the selection and its reason, the packages, the program's revision
     end
 ```
 
-The outputs are the contract between the jobs: the Node major the other jobs install, the executor, the matrix as a JSON list, and the build plan as a JSON object or nothing. Each is one line, so a project value with a line break is refused rather than written.
+The outputs are the contract between the jobs: the Node major the other jobs install, the matrix as a JSON list, and the build plan as a JSON object or nothing. Each matrix entry and the build plan carry the executor they run through. Each is one line, so a project value with a line break is refused rather than written.
 
 #### Which packages run
 

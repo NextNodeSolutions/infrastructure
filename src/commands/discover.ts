@@ -48,7 +48,7 @@ export async function discover(): Promise<void> {
 				]
 			: await workspacePackages(project, selection, toolchain.pnpmVersion)
 	const plan = planFor(packages, executor)
-	writeOutputs(outputsFor(toolchain, executor, plan))
+	writeOutputs(outputsFor(toolchain, plan))
 	writeSummary(
 		renderSummary({
 			selection,

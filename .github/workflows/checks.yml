@@ -25,7 +25,6 @@ jobs:
         timeout-minutes: 10
         outputs:
             node: ${{ steps.discover.outputs.node }}
-            executor: ${{ steps.discover.outputs.executor }}
             checks: ${{ steps.discover.outputs.checks }}
             build: ${{ steps.discover.outputs.build }}
         steps:
