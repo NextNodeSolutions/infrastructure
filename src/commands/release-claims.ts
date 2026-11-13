@@ -78,6 +78,7 @@ export async function claimWorker(
 			hostname: declaration.domain,
 			plan,
 		}),
+		declarationFile(deployable.directory),
 	)
 	return { tags, backend }
 }

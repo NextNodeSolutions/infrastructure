@@ -1,4 +1,5 @@
 import { decoder } from '../domain/decode.ts'
+import { Refusal } from '../domain/refusal.ts'
 
 import { fieldsOf, isSuccess, send } from './http.ts'
 
@@ -35,10 +36,15 @@ async function request(
 	})
 }
 
+type Reserving = {
+	readonly backend: StateBackend
+	readonly owner: string
+	readonly file: string
+}
+
 async function reserveName(
-	backend: StateBackend,
+	{ backend, owner, file }: Reserving,
 	key: string,
-	owner: string,
 ): Promise<void> {
 	const written = await request(backend, 'PUT', key, { owner })
 	if (isSuccess(written)) return
@@ -58,16 +64,17 @@ async function reserveName(
 		'owner',
 	)
 	if (holder === owner) return
-	throw new Error(
-		`${key} is reserved by ${holder}, not ${owner}. Choose another name; no existing claim is replaced`,
+	throw new Refusal(
+		file,
+		`${file}: ${key} is reserved by ${holder}, not ${owner}. Choose another name; no existing claim is replaced`,
 	)
 }
 
 export async function reserveOwnership(
 	backend: StateBackend,
 	ownership: Ownership,
+	file: string,
 ): Promise<void> {
-	await Promise.all(
-		ownership.keys.map(key => reserveName(backend, key, ownership.owner)),
-	)
+	const reserving = { backend, owner: ownership.owner, file }
+	await Promise.all(ownership.keys.map(key => reserveName(reserving, key)))
 }
