@@ -14,7 +14,8 @@ import {
 	withOwner,
 } from '../domain/ownership.ts'
 
-import type { Account, StateBackend } from '../adapters/cloudflare.ts'
+import type { Account } from '../adapters/cloudflare-api.ts'
+import type { StateBackend } from '../adapters/cloudflare.ts'
 import type { WorkerDeclaration } from '../domain/declaration.ts'
 import type { Deployable } from '../domain/deployable.ts'
 import type { ResourcePlan } from '../domain/resources.ts'

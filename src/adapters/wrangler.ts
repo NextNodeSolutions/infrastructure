@@ -6,7 +6,7 @@ import { decoder } from '../domain/decode.ts'
 import { toolEnvironment } from './environment.ts'
 
 import type { WranglerConfig } from '../domain/wrangler-config.ts'
-import type { Account } from './cloudflare.ts'
+import type { Account } from './cloudflare-api.ts'
 import type { ToolEnvironment } from './environment.ts'
 
 const CONFIG_FILE = 'wrangler.json'

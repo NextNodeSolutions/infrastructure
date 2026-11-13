@@ -1,5 +1,6 @@
 import { scratchDirectory } from '../adapters/artifact-files.ts'
-import { accountOf, tagWorker } from '../adapters/cloudflare.ts'
+import { accountOf } from '../adapters/cloudflare-api.ts'
+import { tagWorker } from '../adapters/cloudflare.ts'
 import { inGroup } from '../adapters/github.ts'
 import { waitUntilHealthy } from '../adapters/health.ts'
 import { runInOrder, stream } from '../adapters/processes.ts'
@@ -13,7 +14,8 @@ import { migratedDatabases, releaseConfig } from '../domain/wrangler-config.ts'
 
 import { claimWorker } from './release-claims.ts'
 
-import type { Account, StateBackend } from '../adapters/cloudflare.ts'
+import type { Account } from '../adapters/cloudflare-api.ts'
+import type { StateBackend } from '../adapters/cloudflare.ts'
 import type { Uploaded } from '../adapters/wrangler.ts'
 import type { WorkerDeclaration } from '../domain/declaration.ts'
 import type { Fact, Released } from '../domain/deploy-summary.ts'

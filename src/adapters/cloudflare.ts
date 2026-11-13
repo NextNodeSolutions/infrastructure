@@ -1,29 +1,18 @@
 import { createHash } from 'node:crypto'
 
-import { decoder } from '../domain/decode.ts'
 import { STATE_BUCKET } from '../domain/platform.ts'
 
+import { ask, decode, refused, resultsOf } from './cloudflare-api.ts'
+import { hasBucket } from './cloudflare-stores.ts'
 import { maskSecret } from './github.ts'
-import {
-	fieldsOf,
-	isSuccess,
-	NOT_FOUND,
-	refusalFieldsOf,
-	send,
-} from './http.ts'
+import { fieldsOf, isSuccess, NOT_FOUND } from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
 import type { Zone } from '../domain/hostname.ts'
-import type { PlatformCredentials } from '../domain/platform.ts'
+import type { Account } from './cloudflare-api.ts'
 import type { Reply } from './http.ts'
 
-const API = 'https://api.cloudflare.com/client/v4'
 const ZONES_PER_PAGE = 50
-
-export type Account = {
-	readonly id: string
-	readonly token: string
-}
 
 type StateKeys = {
 	readonly accessKeyId: string
@@ -38,49 +27,6 @@ export type StateBackend = {
 }
 
 const STATE_REGION = 'auto'
-
-const decode = decoder(message => new Error(`Cloudflare: ${message}`))
-
-export function accountOf(credentials: PlatformCredentials): Account {
-	return {
-		id: credentials.cloudflareAccount,
-		token: credentials.cloudflareToken,
-	}
-}
-
-function ask(
-	account: Account,
-	method: string,
-	path: string,
-	body?: Fields,
-): Promise<Reply> {
-	return send({
-		method,
-		url: `${API}${path}`,
-		headers: { authorization: `Bearer ${account.token}` },
-		body,
-	})
-}
-
-function reasonsOf(reply: Reply): string {
-	const errors = refusalFieldsOf(reply)?.errors
-	if (!Array.isArray(errors)) return ''
-	return decode
-		.records({ errors }, 'errors')
-		.map(error => String(error.message))
-		.join('; ')
-}
-
-function refused(reply: Reply, action: string): Error {
-	return new Error(
-		`Cloudflare refused to ${action} (HTTP ${reply.status}): ${reasonsOf(reply)}`,
-	)
-}
-
-function resultsOf(reply: Reply, action: string): readonly Fields[] {
-	if (!isSuccess(reply)) throw refused(reply, action)
-	return decode.records(fieldsOf(reply, 'Cloudflare'), 'result')
-}
 
 // The Worker a hostname is attached to as a custom domain, when one is.
 export async function hostnameHolder(
@@ -178,29 +124,17 @@ export async function recordTypesAt(
 	return records.map(record => decode.string(record, 'type'))
 }
 
-async function hasStateBucket(account: Account): Promise<boolean> {
-	const reply = await ask(
-		account,
-		'GET',
-		`/accounts/${account.id}/r2/buckets/${STATE_BUCKET}`,
-	)
-	if (reply.status === NOT_FOUND) return false
-	if (!isSuccess(reply))
-		throw refused(reply, `read the bucket ${STATE_BUCKET}`)
-	return true
-}
-
 // Two releases of a first run may both find the bucket missing: the one that loses the
 // creation finds it made.
 async function ensureStateBucket(account: Account): Promise<void> {
-	if (await hasStateBucket(account)) return
+	if (await hasBucket(account, STATE_BUCKET)) return
 	const created = await ask(
 		account,
 		'POST',
 		`/accounts/${account.id}/r2/buckets`,
 		{ name: STATE_BUCKET },
 	)
-	if (isSuccess(created) || (await hasStateBucket(account))) return
+	if (isSuccess(created) || (await hasBucket(account, STATE_BUCKET))) return
 	throw refused(created, `create the bucket ${STATE_BUCKET}`)
 }
 
