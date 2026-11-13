@@ -19,6 +19,8 @@ type ReleaseProof = {
 	readonly logUrl: string
 }
 
+// Every attempt of the run: a re-run lists only its own jobs unless asked for all, and
+// the attempt that released may be an earlier one.
 async function hasSuccessfulRelease(
 	api: GitHub,
 	run: string,
@@ -27,7 +29,7 @@ async function hasSuccessfulRelease(
 	const found = await findInPages(
 		api,
 		{
-			path: `/actions/runs/${run}/jobs`,
+			path: `/actions/runs/${run}/jobs?filter=all`,
 			action: 'verify release jobs',
 			entries: reply =>
 				decode.records(fieldsOf(reply, 'release jobs'), 'jobs'),
