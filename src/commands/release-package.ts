@@ -39,6 +39,16 @@ async function refuseForeignTarball(
 	)
 }
 
+// The version is published once npm accepted it, so a registry that fails to answer
+// while the release waits has only not listed it yet.
+async function listing(
+	published: PublishedAs,
+): Promise<PublishedAs | undefined> {
+	const isListed = await hasVersion(published).catch(() => false)
+	if (!isListed) return undefined
+	return published
+}
+
 export async function releasePackage(
 	subject: Subject,
 	declaration: PackageDeclaration,
@@ -64,10 +74,7 @@ export async function releasePackage(
 			publisher.environment,
 		),
 	)
-	const listed = await until(
-		async () => ((await hasVersion(published)) ? published : undefined),
-		PATIENCE,
-	)
+	const listed = await until(() => listing(published), PATIENCE)
 	const visibility =
 		listed || declaration.access === 'restricted'
 			? 'accepted by the registry'
