@@ -106,7 +106,6 @@ async function uploadRelease(
 ): Promise<Uploaded> {
 	const wrangler = prepareWrangler(
 		context.root,
-		scratchDirectory('wrangler'),
 		releaseConfig(release),
 		account,
 	)

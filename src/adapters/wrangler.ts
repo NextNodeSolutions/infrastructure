@@ -1,8 +1,9 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { decoder } from '../domain/decode.ts'
 
+import { scratchDirectory } from './artifact-files.ts'
 import { toolEnvironment } from './environment.ts'
 
 import type { WranglerConfig } from '../domain/wrangler-config.ts'
@@ -45,11 +46,10 @@ function credentialsOf(
 // holds its configuration, so what it writes beside that file stays out of the project.
 export function prepareWrangler(
 	programRoot: string,
-	scratch: string,
 	config: WranglerConfig,
 	account?: Account,
 ): Wrangler {
-	mkdirSync(scratch, { recursive: true })
+	const scratch = scratchDirectory('wrangler')
 	const configPath = join(scratch, CONFIG_FILE)
 	const output = join(scratch, OUTPUT_FILE)
 	writeFileSync(configPath, JSON.stringify(config))

@@ -124,7 +124,6 @@ async function bundleWorker(
 	if (!declaration.main) return
 	const wrangler = prepareWrangler(
 		staging.programRoot,
-		scratchDirectory('wrangler'),
 		bundlingConfig(
 			staging.name,
 			declaration,
