@@ -1,27 +1,16 @@
 import { decoder } from '../domain/decode.ts'
 
 import { refusedBy } from './github-api.ts'
-import { isSuccess, NOT_FOUND } from './http.ts'
+import { successfulPipelineDeployment } from './github-release-proof.ts'
+import { isSuccess } from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
-import type { Relation } from './git.ts'
 import type { GitHub } from './github-api.ts'
 import type { Reply } from './http.ts'
 
-// How far back a deployable's history is read for a deployment that succeeded. Beyond
-// it the deployable counts as never deployed, which deploys it again.
-const HISTORY_DEPTH = 10
+const DEPLOYMENTS_PER_PAGE = 100
 // GitHub's limit for the description of a deployment status.
 const LONGEST_DESCRIPTION = 140
-
-// How GitHub places the commit of a release against a deployed one, read as where the
-// deployed one stands.
-const RELATIONS: Readonly<Record<string, Relation>> = {
-	identical: 'same',
-	ahead: 'older',
-	behind: 'newer',
-	diverged: 'unrelated',
-}
 
 const decode = decoder(message => new Error(`GitHub deployments: ${message}`))
 
@@ -40,58 +29,45 @@ function idOf(deployment: Fields): number {
 async function firstSuccess(
 	api: GitHub,
 	deployments: readonly Fields[],
+	environment: string,
 ): Promise<string | undefined> {
-	const [latest, ...older] = deployments
-	if (!latest) return undefined
-	const statuses = listOf(
-		await api.get(`/deployments/${idOf(latest)}/statuses?per_page=1`),
-		'read a deployment status',
+	const [deployment, ...older] = deployments
+	if (!deployment) return undefined
+	const commit = decode.string(deployment, 'sha')
+	if (
+		await successfulPipelineDeployment(api, {
+			id: idOf(deployment),
+			commit,
+			environment,
+		})
 	)
-	if (statuses[0]?.state !== 'success') return firstSuccess(api, older)
-	return decode.string(latest, 'sha')
+		return commit
+	return firstSuccess(api, older, environment)
 }
 
 // The commit of the last deployment that succeeded in an environment: the baseline of
 // the next one. GitHub keeps it, so the pipeline keeps no state of its own.
-export async function lastDeployedCommit(
+export function lastDeployedCommit(
 	api: GitHub,
 	environment: string,
 ): Promise<string | undefined> {
+	return deployedPage(api, environment, 1)
+}
+
+async function deployedPage(
+	api: GitHub,
+	environment: string,
+	page: number,
+): Promise<string | undefined> {
 	const deployments = listOf(
 		await api.get(
-			`/deployments?environment=${encodeURIComponent(environment)}&per_page=${HISTORY_DEPTH}`,
+			`/deployments?environment=${encodeURIComponent(environment)}&per_page=${DEPLOYMENTS_PER_PAGE}&page=${page}`,
 		),
 		`list the deployments of ${environment}`,
 	)
-	return firstSuccess(api, deployments)
-}
-
-// Where a deployed commit stands against the one a release holds, asked of GitHub: the
-// release job has no checkout to ask git. A commit the repository no longer holds is
-// unrelated.
-export async function deployedRelation(
-	api: GitHub,
-	deployed: string,
-	commit: string,
-): Promise<Relation> {
-	const reply = await api.get(
-		`/compare/${encodeURIComponent(deployed)}...${encodeURIComponent(commit)}?per_page=1`,
-	)
-	if (reply.status === NOT_FOUND) return 'unrelated'
-	if (!isSuccess(reply))
-		throw refusedBy(reply, `compare ${deployed} with ${commit}`)
-	const parsed: unknown = JSON.parse(reply.text)
-	const status = decode.string(
-		decode.record(parsed, 'the comparison'),
-		'status',
-	)
-	const relation = RELATIONS[status]
-	if (!relation) {
-		throw new Error(
-			`GitHub deployments: the comparison answered an unknown status ${status}`,
-		)
-	}
-	return relation
+	const commit = await firstSuccess(api, deployments, environment)
+	if (commit || deployments.length < DEPLOYMENTS_PER_PAGE) return commit
+	return deployedPage(api, environment, page + 1)
 }
 
 export type DeploymentRecord = {

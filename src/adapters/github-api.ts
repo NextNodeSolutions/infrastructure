@@ -1,4 +1,6 @@
-import { isSuccess, messageOf, NOT_FOUND, send } from './http.ts'
+import { decoder } from '../domain/decode.ts'
+
+import { fieldsOf, isSuccess, messageOf, NOT_FOUND, send } from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
 import type { PullRequestEvent } from '../domain/occasion.ts'
@@ -45,6 +47,16 @@ export function refusedBy(reply: Reply, action: string): Error {
 	return new Error(
 		`GitHub refused to ${action} (HTTP ${reply.status}): ${messageOf(reply)}`,
 	)
+}
+
+export async function branchCommit(
+	api: GitHub,
+	branch: string,
+): Promise<string> {
+	const reply = await api.get(`/commits/${encodeURIComponent(branch)}`)
+	if (!isSuccess(reply)) throw refusedBy(reply, `read the tip of ${branch}`)
+	const decode = decoder(message => new Error(`GitHub branch: ${message}`))
+	return decode.string(fieldsOf(reply, 'the branch tip'), 'sha')
 }
 
 // A file as the commit holds it, read through the API: the job that reads it this way

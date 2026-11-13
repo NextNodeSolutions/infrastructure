@@ -68,7 +68,9 @@ flowchart TD
     P -->|no, or a Worker| R[Built and released]
 ```
 
-The baseline is per deployable and it is the last deployment that succeeded, read from GitHub's deployment records. The pipeline keeps no state of its own. A run that failed, was cancelled or never started therefore heals itself: the next one compares with the same baseline and deploys everything since. The records are read a bounded number of deployments back, and a deployable with no success in that window counts as never deployed, which deploys it again.
+The baseline is per deployable and it is the last deployment that succeeded, read from GitHub's deployment records. Each success must name a GitHub run of the ruleset-required Deploy workflow with the same commit and a successful Release job for this deployable. A project-authored workflow cannot supply that proof. Records and statuses are paginated until a verified success or the end of history. A deleted proof causes another build, never a skipped release.
+
+The pipeline keeps no release history of its own. A run that failed, was cancelled or never started therefore heals itself. Before requesting credentials, Release separately checks that its commit is still the default branch tip. A superseded run refuses even if deployment records are forged or deleted. A newer merge during a release queues behind that release and then deploys the newer commit.
 
 A change reaches a package when it touches the package or one it depends on, transitively, through pnpm's own filter. A root file that every package reads reaches all of them, and a single-package repository is always reached. Unlike the checks, a deployment ignores no file: Markdown is content for a site.
 
@@ -173,20 +175,20 @@ Every failed state leaves the baseline where it was. Merging a fix, or re-runnin
 
 ### What a failure leaves
 
-| Outcome                                                         | What is left                                                                              | Next action                                                        |
-| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| A `nextnode.toml` or its `package.json` is refused              | Discover fails with an annotation on the file that names the key. Nothing is built.       | Fix the file.                                                      |
-| A build fails                                                   | That deployable is not released. The others are.                                          | Fix the build.                                                     |
-| The release is refused before it records anything               | Nothing changed anywhere.                                                                 | What the message says.                                             |
-| An older run is started again after a newer one deployed        | It refuses and records nothing. The newer commit keeps serving.                           | Nothing.                                                           |
-| The vault refuses the login                                     | A failed deployment record. Nothing changed in Cloudflare.                                | The run is not the `Deploy` workflow on the standing pull request. |
-| Another repository deploys the Worker, or the hostname is taken | A failed record. Nothing changed in Cloudflare.                                           | Rename the package, or choose another domain.                      |
-| Provisioning stops midway                                       | What was created stays and the state records it. The previous version serves.             | Re-run the failed jobs.                                            |
-| A migration fails                                               | The migrations applied before it stay applied. The previous code serves on that database. | Merge a fixed migration.                                           |
-| The upload fails                                                | The migrations are applied. The previous version serves.                                  | Re-run the failed jobs.                                            |
-| The health path does not answer                                 | The new version serves and is recorded as failed. Nothing rolls back by itself.           | Merge a fix, or roll back to the previous version in Cloudflare.   |
-| The registry trusts no publication from the run                 | Nothing is published.                                                                     | Set the package's trusted publisher, as the message says.          |
-| The registry accepts the version and does not list it in time   | The deployment succeeded and the summary says the version is not listed yet.              | Nothing.                                                           |
+| Outcome                                                              | What is left                                                                                            | Next action                                                        |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| A `nextnode.toml` or its `package.json` is refused                   | Discover fails with an annotation on the file that names the key. Nothing is built.                     | Fix the file.                                                      |
+| A build fails                                                        | That deployable is not released. The others are.                                                        | Fix the build.                                                     |
+| The release is refused before it records anything                    | Nothing changed anywhere.                                                                               | What the message says.                                             |
+| A run is started after another commit becomes the default branch tip | It refuses before dependency installation or credentials and records nothing. What serves is unchanged. | Nothing.                                                           |
+| The vault refuses the login                                          | A failed deployment record. Nothing changed in Cloudflare.                                              | The run is not the `Deploy` workflow on the standing pull request. |
+| Another repository deploys the Worker, or the hostname is taken      | A failed record. Nothing changed in Cloudflare.                                                         | Rename the package, or choose another domain.                      |
+| Provisioning stops midway                                            | What was created stays and the state records it. The previous version serves.                           | Re-run the failed jobs.                                            |
+| A migration fails                                                    | The migrations applied before it stay applied. The previous code serves on that database.               | Merge a fixed migration.                                           |
+| The upload fails                                                     | The migrations are applied. The previous version serves.                                                | Re-run the failed jobs.                                            |
+| The health path does not answer                                      | The new version serves and is recorded as failed. Nothing rolls back by itself.                         | Merge a fix, or roll back to the previous version in Cloudflare.   |
+| The registry trusts no publication from the run                      | Nothing is published.                                                                                   | Set the package's trusted publisher, as the message says.          |
+| The registry accepts the version and does not list it in time        | The deployment succeeded and the summary says the version is not listed yet.                            | Nothing.                                                           |
 
 Migrations are applied before the code that needs them, so a migration must also suit the version that still serves while the upload runs, and after it if the upload fails.
 
@@ -214,15 +216,15 @@ The boundary stands between a repository and the platform, and so between one re
 
 What the trusted side holds:
 
-| Credential                                                      | Held by                          | Lives               | Reaches                                                 |
-| --------------------------------------------------------------- | -------------------------------- | ------------------- | ------------------------------------------------------- |
-| A repository token that only reads                              | Plan, Discover, Build            | The job             | The repository's content and deployment records         |
-| A repository token that writes branches and pull requests       | Open the standing pull request   | The job             | The repository                                          |
-| A repository token that records deployments                     | Release                          | The job             | The repository's deployment records                     |
-| The run's identity, which asks GitHub for tokens naming the run | Release, inside the program only | The job             | Any service that admits this run                        |
-| The vault's access token                                        | Release of a Worker              | Minutes             | The platform's secrets, read only                       |
-| The Cloudflare token and the state passphrase                   | Release of a Worker              | Stored in the vault | The whole Cloudflare account, and every project's state |
-| A registry token                                                | Release of a package             | Minutes             | One package                                             |
+| Credential                                                      | Held by                          | Lives               | Reaches                                                       |
+| --------------------------------------------------------------- | -------------------------------- | ------------------- | ------------------------------------------------------------- |
+| A repository token that only reads                              | Plan, Discover, Build            | The job             | Repository content, deployment records and release-run proofs |
+| A repository token that writes branches and pull requests       | Open the standing pull request   | The job             | The repository                                                |
+| A repository token that records deployments                     | Release                          | The job             | The repository's deployment records                           |
+| The run's identity, which asks GitHub for tokens naming the run | Release, inside the program only | The job             | Any service that admits this run                              |
+| The vault's access token                                        | Release of a Worker              | Minutes             | The platform's secrets, read only                             |
+| The Cloudflare token and the state passphrase                   | Release of a Worker              | Stored in the vault | The whole Cloudflare account, and every project's state       |
+| A registry token                                                | Release of a package             | Minutes             | One package                                                   |
 
 The Cloudflare token reaches the whole account, so the program is what confines a project to its own resources:
 

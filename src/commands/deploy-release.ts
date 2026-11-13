@@ -3,11 +3,9 @@ import { join } from 'node:path'
 import { refuseAnythingButFiles } from '../adapters/artifact-files.ts'
 import { requiredVariable, takeVariable } from '../adapters/environment.ts'
 import { readPullRequestEvent } from '../adapters/event.ts'
-import { gitHub, readFileAt } from '../adapters/github-api.ts'
+import { branchCommit, gitHub, readFileAt } from '../adapters/github-api.ts'
 import {
 	createDeployment,
-	deployedRelation,
-	lastDeployedCommit,
 	reportDeployment,
 } from '../adapters/github-deployments.ts'
 import { writeSummary } from '../adapters/github.ts'
@@ -48,8 +46,13 @@ export async function deployRelease(): Promise<void> {
 		DEPLOYABLE,
 	)
 	const root = programRoot()
-	await installDependencies(root, 'parsing')
 	const api = gitHub(token, event)
+	await refuseStale(
+		api,
+		{ name: requested.name, commit: event.headSha },
+		event.defaultBranch,
+	)
+	await installDependencies(root, 'parsing')
 	const subject = await committedSubject(api, event, requested.directory)
 	const { name } = subject.deployable
 	if (name !== requested.name) {
@@ -67,7 +70,6 @@ export async function deployRelease(): Promise<void> {
 		commit: event.headSha,
 	}
 	const { declaration } = subject
-	await refuseStale(api, { name, commit: event.headSha })
 	await recorded(api, { name, commit: event.headSha }, () =>
 		declaration.kind === 'package'
 			? releasePackage(subject, declaration, context)
@@ -99,19 +101,16 @@ type Recorded = {
 
 type Outcome = Pick<DeploymentStatus, 'state' | 'description' | 'url'>
 
-// A run that is started again releases the commit it was started for. When a later run
-// deployed a newer one meanwhile, the old run gives way, and records nothing: what
-// serves is still the last success.
 async function refuseStale(
 	api: GitHub,
 	{ name, commit }: Recorded,
+	branch: string,
 ): Promise<void> {
-	const deployed = await lastDeployedCommit(api, name)
-	const relation = deployed && (await deployedRelation(api, deployed, commit))
-	if (!deployed || relation !== 'newer') return
-	throw new Error(
-		`${name} already serves the newer commit ${short(deployed)}: this run holds ${short(commit)} and deploys nothing over it`,
-	)
+	const current = await branchCommit(api, branch)
+	if (current === commit) return
+	const cause = `${name}: this run holds ${short(commit)}, but ${branch} now holds ${short(current)}. Run the latest deployment instead; this run releases nothing`
+	writeSummary(renderFailure(name, cause))
+	throw new Error(cause)
 }
 
 function runUrl(): string {
