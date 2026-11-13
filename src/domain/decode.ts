@@ -3,6 +3,7 @@ export type Fields = Record<string, unknown>
 export type Decoder = {
 	readonly record: (parsed: unknown, what: string) => Fields
 	readonly string: (fields: Fields, key: string) => string
+	readonly number: (fields: Fields, key: string) => number
 	readonly stringRecord: (
 		parsed: unknown,
 		what: string,
@@ -31,6 +32,7 @@ type Scalars = Pick<
 	Decoder,
 	| 'record'
 	| 'string'
+	| 'number'
 	| 'stringRecord'
 	| 'optionalString'
 	| 'oneOf'
@@ -61,6 +63,13 @@ function scalars(invalid: Invalid, container: string): Scalars {
 	return {
 		record,
 		string,
+		number: (fields, key) => {
+			if (!(key in fields)) throw invalid(`${key} is missing`)
+			const field = fields[key]
+			if (typeof field !== 'number')
+				throw invalid(`${key} must be a number`)
+			return field
+		},
 		stringRecord: (parsed, what) => {
 			const fields = record(parsed, what)
 			return Object.fromEntries(

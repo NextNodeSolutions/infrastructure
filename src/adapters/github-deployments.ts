@@ -12,12 +12,6 @@ const LONGEST_DESCRIPTION = 140
 
 const decode = decoder(message => new Error(`GitHub deployments: ${message}`))
 
-function idOf(deployment: Fields): number {
-	if (typeof deployment.id !== 'number')
-		throw new Error('GitHub deployments: a deployment has no id')
-	return deployment.id
-}
-
 async function firstSuccess(
 	api: GitHub,
 	deployments: readonly Fields[],
@@ -28,7 +22,7 @@ async function firstSuccess(
 	const commit = decode.string(deployment, 'sha')
 	if (
 		await successfulPipelineDeployment(api, {
-			id: idOf(deployment),
+			id: decode.number(deployment, 'id'),
 			commit,
 			environment,
 		})
@@ -74,7 +68,7 @@ export async function createDeployment(
 	})
 	if (!isSuccess(reply))
 		throw refusedBy(reply, `record a deployment of ${record.environment}`)
-	return idOf(fieldsOf(reply, 'GitHub deployments'))
+	return decode.number(fieldsOf(reply, 'GitHub deployments'), 'id')
 }
 
 export type DeploymentStatus = {
