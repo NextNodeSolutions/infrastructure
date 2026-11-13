@@ -1,19 +1,18 @@
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 
 import { readCheckout } from '../adapters/checkout.ts'
 import { optionalVariable, requiredVariable } from '../adapters/environment.ts'
 import { hasFile, readManifest } from '../adapters/files.ts'
 import { hasChangesIn, mergeBase } from '../adapters/git.ts'
 import { writeOutputs, writeSummary } from '../adapters/github.ts'
-import { decodeListing, throughNpm } from '../adapters/pnpm.ts'
-import { capture } from '../adapters/processes.ts'
+import { listWorkspace } from '../adapters/pnpm.ts'
 import { programRevision } from '../adapters/program-directory.ts'
-import { listPackages } from '../domain/commands.ts'
 import { ROOT_DIRECTORY } from '../domain/directory.ts'
 import { MANIFEST_FILE, manifestFile } from '../domain/manifest.ts'
 import { NOTHING_TO_CHECK, outputsFor } from '../domain/outputs.ts'
 import { planFor } from '../domain/plan.ts'
 import {
+	filterArguments,
 	ROOT_FILES,
 	selectAgainstBase,
 	SINGLE_PACKAGE,
@@ -75,14 +74,14 @@ async function workspacePackages(
 	selection: Selection,
 	pnpmVersion: string,
 ): Promise<readonly Package[]> {
-	const command = throughNpm(pnpmVersion)(listPackages(selection))
-	const listing = decodeListing(await capture(command, project))
-	const members = listing
-		.map(listed => ({
-			name: listed.name,
-			directory: relative(project, listed.path),
-		}))
-		.filter(member => member.directory !== '')
+	const listing = await listWorkspace(
+		project,
+		pnpmVersion,
+		filterArguments(selection),
+	)
+	const members = listing.filter(
+		member => member.directory !== ROOT_DIRECTORY,
+	)
 	return members.map(member => ({
 		name: member.name,
 		directory: member.directory,

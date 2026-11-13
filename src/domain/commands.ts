@@ -1,9 +1,7 @@
 import { BUILD_SCRIPT } from './checks.ts'
-import { filterArguments } from './selection.ts'
 
 import type { Executor } from './executor.ts'
 import type { BuildPlan, CheckEntry } from './plan.ts'
-import type { Selection } from './selection.ts'
 
 export type Command = {
 	readonly program: string
@@ -16,15 +14,8 @@ export function pnpm(...args: readonly string[]): Command {
 
 export const INSTALL = pnpm('install', '--frozen-lockfile')
 
-export function listPackages(selection: Selection): Command {
-	return pnpm(
-		'-r',
-		...filterArguments(selection),
-		'ls',
-		'--depth',
-		'-1',
-		'--json',
-	)
+export function listPackages(filter: readonly string[]): Command {
+	return pnpm('-r', ...filter, 'ls', '--depth', '-1', '--json')
 }
 
 const CHECK_COMMANDS: Record<

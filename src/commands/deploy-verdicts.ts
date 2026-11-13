@@ -1,9 +1,8 @@
 import { hasChangesIn, relationToHead } from '../adapters/git.ts'
 import { lastDeployedCommit } from '../adapters/github-deployments.ts'
 import { hasVersion } from '../adapters/npm.ts'
-import { decodeListing, throughNpm } from '../adapters/pnpm.ts'
-import { capture } from '../adapters/processes.ts'
-import { listChangedPackages } from '../domain/deploy-commands.ts'
+import { listWorkspace } from '../adapters/pnpm.ts'
+import { changedSince } from '../domain/deploy-commands.ts'
 import {
 	NEVER_DEPLOYED,
 	verdictFor,
@@ -34,13 +33,10 @@ function changesSince({ project, executor, toolchain }: Checkout): Changes {
 			executor === 'single' ||
 			(await hasChangesIn(deployed, ROOT_FILES, project))
 		if (reachesEverything) return 'everything'
-		const listing = decodeListing(
-			await capture(
-				throughNpm(toolchain.pnpmVersion)(
-					listChangedPackages(deployed),
-				),
-				project,
-			),
+		const listing = await listWorkspace(
+			project,
+			toolchain.pnpmVersion,
+			changedSince(deployed),
 		)
 		return listing.map(listed => listed.name)
 	}

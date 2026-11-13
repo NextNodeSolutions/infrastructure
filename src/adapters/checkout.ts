@@ -1,20 +1,17 @@
 import { readFileSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { join } from 'node:path'
 
-import { listPackages } from '../domain/commands.ts'
 import { NEXTNODE_FILE } from '../domain/declaration.ts'
 import { declarationFile } from '../domain/deployable.ts'
 import { ROOT_DIRECTORY } from '../domain/directory.ts'
 import { executorFor, TURBO_FILE, WORKSPACE_FILE } from '../domain/executor.ts'
 import { manifestFile } from '../domain/manifest.ts'
 import { Refusal } from '../domain/refusal.ts'
-import { WITHOUT_BASE } from '../domain/selection.ts'
 import { subjectOf } from '../domain/subject.ts'
 import { readToolchain } from '../domain/toolchain.ts'
 
 import { hasFile, readJsonFile, readManifest } from './files.ts'
-import { decodeListing, throughNpm } from './pnpm.ts'
-import { capture } from './processes.ts'
+import { listWorkspace } from './pnpm.ts'
 import { parseToml } from './toml.ts'
 
 import type { Executor } from '../domain/executor.ts'
@@ -57,16 +54,11 @@ export async function declaringDirectories(
 			`${NEXTNODE_FILE}: a workspace declares what it deploys in its packages, one ${NEXTNODE_FILE} beside each package.json, never at the root`,
 		)
 	}
-	const listing = decodeListing(
-		await capture(
-			throughNpm(toolchain.pnpmVersion)(listPackages(WITHOUT_BASE)),
-			project,
-		),
-	)
-	return listing
-		.map(listed => relative(project, listed.path))
-		.filter(directory => directory !== '')
-		.filter(directory => hasFile(join(project, directory, NEXTNODE_FILE)))
+	const members = await listWorkspace(project, toolchain.pnpmVersion, [])
+	return members
+		.map(member => member.directory)
+		.filter(directory => directory !== ROOT_DIRECTORY)
+		.filter(directory => hasFile(join(project, declarationFile(directory))))
 }
 
 // One deployable as the checkout holds it: its nextnode.toml and the package.json beside.
