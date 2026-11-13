@@ -4,19 +4,28 @@ import { gitHub } from '../adapters/github-api.ts'
 import { writeOutputs, writeSummary } from '../adapters/github.ts'
 import { programRevision } from '../adapters/program-directory.ts'
 import { deployOutputs, NOTHING_TO_DEPLOY } from '../domain/deploy-outputs.ts'
-import { NOTHING_DECLARED, renderRelease } from '../domain/deploy-summary.ts'
-import { refuseUnlessStanding } from '../domain/occasion.ts'
+import {
+	NOT_STANDING,
+	NOTHING_DECLARED,
+	renderRelease,
+} from '../domain/deploy-summary.ts'
+import { occasionOf } from '../domain/occasion.ts'
 
 import { survey } from './deploy-survey.ts'
 
 // The job that decides what a run deploys. It reads the project's files and runs its
 // package manager, so its token only reads: what it decides is a request to the release,
-// which reads the commit again before it acts.
+// which reads the commit again before it acts. A pull request that is not the standing
+// one asks for nothing, so the run ends green with no build and no release.
 export async function deployDiscover(): Promise<void> {
 	const project = requiredVariable('GITHUB_WORKSPACE')
 	const token = takeVariable('GITHUB_TOKEN')
 	const event = readPullRequestEvent()
-	refuseUnlessStanding(event)
+	if (occasionOf(event) !== 'release') {
+		writeOutputs(NOTHING_TO_DEPLOY)
+		writeSummary(NOT_STANDING)
+		return
+	}
 	const surveyed = await survey(project, event, gitHub(token, event))
 	if (!surveyed) {
 		writeOutputs(NOTHING_TO_DEPLOY)

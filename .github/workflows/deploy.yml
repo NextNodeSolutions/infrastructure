@@ -3,8 +3,9 @@
 # Every decision is made by the program under src/, which each job fetches at this
 # file's own commit and runs with one line.
 #
-# It runs on the standing pull request, from the default branch into the branch that
-# never moves, and on nothing else: the program refuses any other pull request first.
+# It deploys the standing pull request, from the default branch into the branch that
+# never moves, and nothing else: on any other pull request the program asks for no build
+# and no release, and a release started anyway refuses.
 # The jobs are split by what they hold. Discover and Build read and run the project and
 # hold a token that only reads. Release holds what can deploy, and neither checks out,
 # installs nor runs anything of the project.

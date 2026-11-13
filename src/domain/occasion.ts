@@ -31,8 +31,9 @@ export function occasionOf(event: PullRequestEvent): Occasion {
 	)
 }
 
-// The Deploy workflow releases the standing pull request and refuses every other, before
-// anything of the project is read and before any credential is asked for.
+// A release serves the standing pull request and refuses every other, before anything
+// of the project is read and before any credential is asked for. Discovery already asks
+// for no release elsewhere: this holds when a job is started without it.
 export function refuseUnlessStanding(event: PullRequestEvent): void {
 	if (occasionOf(event) === 'release') return
 	throw new Error(

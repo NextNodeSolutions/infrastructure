@@ -18,6 +18,9 @@ export type Plan = {
 export const NOTHING_DECLARED =
 	'Nothing to deploy: the repository holds no nextnode.toml.\n'
 
+export const NOT_STANDING =
+	'Nothing to deploy: only the standing pull request deploys.\n'
+
 export const NOT_A_PROPOSAL =
 	'Nothing to plan: only a pull request into the default branch proposes a deployment.\n'
 
