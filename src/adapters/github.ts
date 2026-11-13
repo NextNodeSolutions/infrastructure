@@ -37,6 +37,20 @@ export function writeSummary(markdown: string): void {
 	appendFileSync(requiredVariable('GITHUB_STEP_SUMMARY'), markdown)
 }
 
+// A secret of several lines is masked line by line: the runner masks what one command names.
+export function maskSecret(secret: string): void {
+	const lines = secret.split(/\r?\n/).filter(line => line !== '')
+	process.stdout.write(
+		lines
+			.map(line => `::add-mask::${escape(line, DATA_ESCAPES)}\n`)
+			.join(''),
+	)
+}
+
+export function annotateWarning(message: string): void {
+	process.stdout.write(`::warning::${escape(message, DATA_ESCAPES)}\n`)
+}
+
 export function annotateError(message: string, file?: string): void {
 	const properties = file ? ` file=${escape(file, PROPERTY_ESCAPES)}` : ''
 	process.stdout.write(

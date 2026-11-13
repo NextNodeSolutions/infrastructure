@@ -1,0 +1,75 @@
+import { join } from 'node:path'
+
+import { packedTarball } from '../adapters/artifact-files.ts'
+import { inGroup } from '../adapters/github.ts'
+import {
+	hasVersion,
+	packedManifest,
+	publishEnvironment,
+} from '../adapters/npm.ts'
+import { stream } from '../adapters/processes.ts'
+import { until } from '../adapters/wait.ts'
+import { ARTIFACT } from '../domain/artifact.ts'
+import { publish } from '../domain/deploy-commands.ts'
+import { short } from '../domain/deploy-selection.ts'
+import { NPM_PACKAGE_PAGE } from '../domain/platform.ts'
+import { publishedAs } from '../domain/subject.ts'
+
+import type { PackageDeclaration } from '../domain/declaration.ts'
+import type { Released } from '../domain/deploy-summary.ts'
+import type { PublishedAs, Subject } from '../domain/subject.ts'
+import type { ReleaseContext } from './release-worker.ts'
+
+// The registry lists a version a moment after it accepts it.
+const PATIENCE = { everyMs: 3000, forMs: 60_000 }
+
+// The registry trusts the workflow for every package of the repository, so the release
+// publishes a tarball only as the package and version the commit declares here.
+async function refuseForeignTarball(
+	tarball: string,
+	published: PublishedAs,
+	cwd: string,
+): Promise<void> {
+	const packed = await packedManifest(tarball, cwd)
+	if (packed.name === published.name && packed.version === published.version)
+		return
+	throw new Error(
+		`The commit publishes ${published.name}@${published.version}, and the build packed ${packed.name ?? 'a nameless package'}@${packed.version ?? 'no version'}`,
+	)
+}
+
+export async function releasePackage(
+	subject: Subject,
+	declaration: PackageDeclaration,
+	context: ReleaseContext,
+): Promise<Released> {
+	const published = publishedAs(subject)
+	const tarball = packedTarball(join(context.artifact, ARTIFACT.package))
+	await refuseForeignTarball(tarball, published, context.artifact)
+	await inGroup('Publish the package', () =>
+		stream(
+			publish(tarball, declaration.access),
+			context.artifact,
+			publishEnvironment(context.identity),
+		),
+	)
+	const listed = await until(
+		async () => ((await hasVersion(published)) ? published : undefined),
+		PATIENCE,
+	)
+	const visibility =
+		listed || declaration.access === 'restricted'
+			? 'accepted by the registry'
+			: 'accepted by the registry, not listed yet'
+	const url = `${NPM_PACKAGE_PAGE}/${published.name}/v/${published.version}`
+	return {
+		name: subject.deployable.name,
+		url,
+		facts: [
+			['Package', `\`${published.name}@${published.version}\``],
+			['Page', url],
+			['Commit', `\`${short(context.commit)}\``],
+			['Registry', visibility],
+		],
+	}
+}

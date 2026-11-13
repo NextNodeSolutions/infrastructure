@@ -5,6 +5,7 @@ import type { Decoder } from './decode.ts'
 
 export type Manifest = {
 	readonly name: string | undefined
+	readonly version: string | undefined
 	readonly packageManager: string | undefined
 	readonly nodeRange: string | undefined
 	readonly scripts: readonly string[]
@@ -17,6 +18,7 @@ export function decodeManifest(parsed: unknown, file: string): Manifest {
 	const fields = decode.record(parsed, file)
 	return {
 		name: decode.optionalString(fields, 'name'),
+		version: decode.optionalString(fields, 'version'),
 		packageManager: decode.optionalString(fields, 'packageManager'),
 		nodeRange: nodeRangeOf(fields, decode),
 		scripts: decode.keysOf(fields, 'scripts'),

@@ -10,7 +10,7 @@ export type Command = {
 	readonly args: readonly string[]
 }
 
-function pnpm(...args: readonly string[]): Command {
+export function pnpm(...args: readonly string[]): Command {
 	return { program: 'pnpm', args }
 }
 

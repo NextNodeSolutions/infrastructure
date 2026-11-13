@@ -1,4 +1,32 @@
-import { capture } from './processes.ts'
+import { capture, succeeds } from './processes.ts'
+
+export type Relation = 'same' | 'older' | 'newer' | 'unrelated'
+
+function isAncestor(
+	ancestor: string,
+	descendant: string,
+	cwd: string,
+): Promise<boolean> {
+	return succeeds(
+		{
+			program: 'git',
+			args: ['merge-base', '--is-ancestor', ancestor, descendant],
+		},
+		cwd,
+	)
+}
+
+// Where a commit stands against the one checked out. A commit this history does not hold
+// answers no to both questions, and so does one git has never seen.
+export async function relationToHead(
+	commit: string,
+	head: string,
+	cwd: string,
+): Promise<Relation> {
+	if (commit === head) return 'same'
+	if (await isAncestor(commit, head, cwd)) return 'older'
+	return (await isAncestor(head, commit, cwd)) ? 'newer' : 'unrelated'
+}
 
 export async function mergeBase(baseRef: string, cwd: string): Promise<string> {
 	const found = await capture(

@@ -1,0 +1,151 @@
+# This file holds what only GitHub reads: when the workflow runs, what each job may
+# touch, which jobs exist and how they depend on each other, and the actions it pins.
+# Every decision is made by the program under src/, which each job fetches at this
+# file's own commit and runs with one line.
+#
+# The jobs are split by what they hold. Discover and Build read and run the project and
+# hold a token that only reads. Anchor and Release hold what can write and what can
+# deploy, and neither checks out, installs or runs anything of the project.
+name: Deploy
+
+on:
+    pull_request:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: deploy-${{ github.repository }}-${{ github.event.number }}
+    cancel-in-progress: false
+
+env:
+    PROGRAM: .nextnode-checks
+    ARTIFACT: .nextnode-artifact
+
+jobs:
+    discover:
+        name: Discover
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        permissions:
+            contents: read
+            deployments: read
+            pull-requests: read
+        outputs:
+            node: ${{ steps.discover.outputs.node }}
+            builds: ${{ steps.discover.outputs.builds }}
+            anchor: ${{ steps.discover.outputs.anchor }}
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  ref: ${{ github.event.pull_request.head.sha }}
+                  persist-credentials: false
+                  fetch-depth: 0
+                  filter: blob:none
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  repository: ${{ job.workflow_repository }}
+                  ref: ${{ job.workflow_sha }}
+                  path: ${{ env.PROGRAM }}
+                  persist-credentials: false
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: ${{ env.PROGRAM }}/.node-version
+            - id: discover
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              run: node "$PROGRAM/src/cli.ts" deploy-discover
+
+    anchor:
+        name: Open the standing pull request
+        needs: discover
+        if: needs.discover.outputs.anchor == 'true'
+        runs-on: ubuntu-24.04
+        timeout-minutes: 5
+        permissions:
+            contents: write
+            pull-requests: write
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  repository: ${{ job.workflow_repository }}
+                  ref: ${{ job.workflow_sha }}
+                  path: ${{ env.PROGRAM }}
+                  persist-credentials: false
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: ${{ env.PROGRAM }}/.node-version
+            - env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              run: node "$PROGRAM/src/cli.ts" deploy-anchor
+
+    build:
+        name: Build ${{ matrix.name }}
+        needs: discover
+        if: needs.discover.outputs.builds != '[]'
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        strategy:
+            fail-fast: false
+            matrix:
+                include: ${{ fromJSON(needs.discover.outputs.builds) }}
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  ref: ${{ github.event.pull_request.head.sha }}
+                  persist-credentials: false
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  repository: ${{ job.workflow_repository }}
+                  ref: ${{ job.workflow_sha }}
+                  path: ${{ env.PROGRAM }}
+                  persist-credentials: false
+            - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version: ${{ needs.discover.outputs.node }}
+                  cache: pnpm
+            - env:
+                  DEPLOYABLE: ${{ toJSON(matrix) }}
+              run: node "$PROGRAM/src/cli.ts" deploy-build
+            - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+              with:
+                  name: ${{ matrix.name }}
+                  path: ${{ env.ARTIFACT }}
+                  include-hidden-files: true
+                  if-no-files-found: error
+                  overwrite: true
+                  retention-days: 1
+
+    release:
+        name: Release ${{ matrix.name }}
+        needs: [discover, build]
+        if: ${{ !cancelled() && needs.discover.result == 'success' && needs.discover.outputs.builds != '[]' }}
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        permissions:
+            contents: read
+            deployments: write
+            id-token: write
+        strategy:
+            fail-fast: false
+            matrix:
+                include: ${{ fromJSON(needs.discover.outputs.builds) }}
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  repository: ${{ job.workflow_repository }}
+                  ref: ${{ job.workflow_sha }}
+                  path: ${{ env.PROGRAM }}
+                  persist-credentials: false
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: ${{ env.PROGRAM }}/.node-version
+            - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+              with:
+                  name: ${{ matrix.name }}
+                  path: ${{ env.ARTIFACT }}
+            - env:
+                  GITHUB_TOKEN: ${{ github.token }}
+                  DEPLOYABLE: ${{ toJSON(matrix) }}
+              run: node "$PROGRAM/src/cli.ts" deploy-release

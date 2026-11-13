@@ -1,10 +1,22 @@
 import { annotateError } from './adapters/github.ts'
 import { build } from './commands/build.ts'
 import { check } from './commands/check.ts'
+import { deployAnchor } from './commands/deploy-anchor.ts'
+import { deployBuild } from './commands/deploy-build.ts'
+import { deployDiscover } from './commands/deploy-discover.ts'
+import { deployRelease } from './commands/deploy-release.ts'
 import { discover } from './commands/discover.ts'
 import { Refusal } from './domain/refusal.ts'
 
-const COMMANDS: Record<string, () => Promise<void>> = { discover, check, build }
+const COMMANDS: Record<string, () => Promise<void>> = {
+	discover,
+	check,
+	build,
+	'deploy-discover': deployDiscover,
+	'deploy-anchor': deployAnchor,
+	'deploy-build': deployBuild,
+	'deploy-release': deployRelease,
+}
 const USAGE_ERROR = 2
 const COMMAND_ARGUMENT = 2
 

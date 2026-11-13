@@ -1,47 +1,91 @@
+export type Fields = Record<string, unknown>
+
 export type Decoder = {
-	readonly record: (parsed: unknown, what: string) => Record<string, unknown>
-	readonly string: (fields: Record<string, unknown>, key: string) => string
-	readonly optionalString: (
-		fields: Record<string, unknown>,
-		key: string,
-	) => string | undefined
-	readonly keysOf: (
-		fields: Record<string, unknown>,
-		key: string,
-	) => readonly string[]
+	readonly record: (parsed: unknown, what: string) => Fields
+	readonly string: (fields: Fields, key: string) => string
+	readonly optionalString: (fields: Fields, key: string) => string | undefined
+	readonly optionalRecord: (fields: Fields, key: string) => Fields | undefined
+	readonly strings: (fields: Fields, key: string) => readonly string[]
+	readonly records: (fields: Fields, key: string) => readonly Fields[]
+	readonly keysOf: (fields: Fields, key: string) => readonly string[]
+	readonly onlyKeys: (
+		fields: Fields,
+		accepted: readonly string[],
+		what: string,
+	) => void
 }
 
-export function decoder(invalid: (message: string) => Error): Decoder {
-	const record = (parsed: unknown, what: string): Record<string, unknown> => {
+type Invalid = (message: string) => Error
+type Scalars = Pick<
+	Decoder,
+	'record' | 'string' | 'optionalString' | 'optionalRecord'
+>
+type Lists = Omit<Decoder, keyof Scalars>
+
+const JSON_OBJECT = 'a JSON object'
+
+function scalars(invalid: Invalid, container: string): Scalars {
+	const record = (parsed: unknown, what: string): Fields => {
 		if (
 			typeof parsed !== 'object' ||
 			parsed === null ||
 			Array.isArray(parsed)
 		) {
-			throw invalid(`${what} must be a JSON object`)
+			throw invalid(`${what} must be ${container}`)
 		}
-		const fields: Record<string, unknown> = { ...parsed }
+		const fields: Fields = { ...parsed }
 		return fields
 	}
-	const string = (fields: Record<string, unknown>, key: string): string => {
+	const string = (fields: Fields, key: string): string => {
 		if (!(key in fields)) throw invalid(`${key} is missing`)
 		const field = fields[key]
 		if (typeof field !== 'string') throw invalid(`${key} must be a string`)
 		return field
 	}
-	const optionalString = (
-		fields: Record<string, unknown>,
-		key: string,
-	): string | undefined => {
-		if (!(key in fields)) return undefined
-		return string(fields, key)
+	return {
+		record,
+		string,
+		optionalString: (fields, key) =>
+			key in fields ? string(fields, key) : undefined,
+		optionalRecord: (fields, key) =>
+			key in fields ? record(fields[key], key) : undefined,
 	}
-	const keysOf = (
-		fields: Record<string, unknown>,
-		key: string,
-	): readonly string[] => {
+}
+
+function lists(invalid: Invalid, { record, optionalRecord }: Scalars): Lists {
+	const list = (fields: Fields, key: string): readonly unknown[] => {
 		if (!(key in fields)) return []
-		return Object.keys(record(fields[key], key))
+		const field = fields[key]
+		if (!Array.isArray(field)) throw invalid(`${key} must be a list`)
+		const entries: readonly unknown[] = field
+		return entries
 	}
-	return { record, string, optionalString, keysOf }
+	return {
+		strings: (fields, key) =>
+			list(fields, key).map(entry => {
+				if (typeof entry !== 'string')
+					throw invalid(`${key} must list strings`)
+				return entry
+			}),
+		records: (fields, key) =>
+			list(fields, key).map(entry => record(entry, `an entry of ${key}`)),
+		keysOf: (fields, key) => Object.keys(optionalRecord(fields, key) ?? {}),
+		onlyKeys: (fields, accepted, what) => {
+			const refused = Object.keys(fields).filter(
+				key => !accepted.includes(key),
+			)
+			if (!refused.length) return
+			throw invalid(
+				`${what} does not take ${refused.join(', ')}. It takes: ${accepted.join(', ')}`,
+			)
+		},
+	}
+}
+
+export function decoder(
+	invalid: Invalid,
+	container: string = JSON_OBJECT,
+): Decoder {
+	const scalar = scalars(invalid, container)
+	return { ...scalar, ...lists(invalid, scalar) }
 }

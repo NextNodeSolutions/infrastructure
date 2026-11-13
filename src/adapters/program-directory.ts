@@ -21,6 +21,11 @@ export function leaveProjectTree(project: string): string {
 	return home
 }
 
+// For a job that checks out no project: the program stays where the checkout put it.
+export function programRoot(): string {
+	return PROGRAM_ROOT
+}
+
 export async function programRevision(root: string): Promise<string> {
 	const revision = await capture(
 		{ program: 'git', args: ['rev-parse', 'HEAD'] },
