@@ -6,10 +6,7 @@ import { hasChangesIn, mergeBase } from '../adapters/git.ts'
 import { writeOutputs, writeSummary } from '../adapters/github.ts'
 import { decodeListing, throughNpm } from '../adapters/pnpm.ts'
 import { capture } from '../adapters/processes.ts'
-import {
-	leaveProjectTree,
-	programRevision,
-} from '../adapters/program-directory.ts'
+import { programRevision } from '../adapters/program-directory.ts'
 import { listPackages } from '../domain/commands.ts'
 import { executorFor, TURBO_FILE, WORKSPACE_FILE } from '../domain/executor.ts'
 import { decodeManifest, MANIFEST_FILE } from '../domain/manifest.ts'
@@ -32,7 +29,6 @@ const PULL_REQUEST = 'pull_request'
 
 export async function discover(): Promise<void> {
 	const project = requiredVariable('GITHUB_WORKSPACE')
-	const programRoot = leaveProjectTree(project)
 	const manifestPath = join(project, MANIFEST_FILE)
 	if (!hasFile(manifestPath)) {
 		writeOutputs(NOTHING_TO_CHECK)
@@ -66,7 +62,7 @@ export async function discover(): Promise<void> {
 			selection,
 			executor,
 			packages,
-			programRevision: await programRevision(programRoot),
+			programRevision: await programRevision(),
 		}),
 	)
 }

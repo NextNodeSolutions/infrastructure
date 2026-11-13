@@ -11,7 +11,7 @@ import { requiredVariable } from '../adapters/environment.ts'
 import { readPullRequestEvent } from '../adapters/event.ts'
 import { inGroup } from '../adapters/github.ts'
 import { runInOrder, stream } from '../adapters/processes.ts'
-import { leaveProjectTree } from '../adapters/program-directory.ts'
+import { programRoot } from '../adapters/program-directory.ts'
 import { installDependencies } from '../adapters/program-install.ts'
 import { prepareWrangler } from '../adapters/wrangler.ts'
 import { ARTIFACT, migrationsOf } from '../domain/artifact.ts'
@@ -41,8 +41,8 @@ export async function deployBuild(): Promise<void> {
 		DEPLOYABLE,
 	)
 	const artifact = join(project, requiredVariable(ARTIFACT_DIRECTORY))
-	const programRoot = leaveProjectTree(project)
-	await installDependencies(programRoot, 'parsing')
+	const root = programRoot()
+	await installDependencies(root, 'parsing')
 	const subject = await readSubject(
 		project,
 		readPullRequestEvent().repository,
@@ -51,7 +51,7 @@ export async function deployBuild(): Promise<void> {
 	await inGroup('Install dependencies', () => stream(INSTALL, project))
 	await runInOrder(deployableBuild(entry, subject.manifest.scripts), project)
 	const staging = {
-		programRoot,
+		programRoot: root,
 		name: entry.name,
 		directory: join(project, entry.directory),
 		staged: scratchDirectory('artifact'),

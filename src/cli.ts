@@ -1,48 +1,8 @@
-import { annotateError } from './adapters/github.ts'
-import { build } from './commands/build.ts'
-import { check } from './commands/check.ts'
-import { deployAnchor } from './commands/deploy-anchor.ts'
-import { deployBuild } from './commands/deploy-build.ts'
-import { deployDiscover } from './commands/deploy-discover.ts'
-import { deployRelease } from './commands/deploy-release.ts'
-import { discover } from './commands/discover.ts'
-import { Refusal } from './domain/refusal.ts'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
-const COMMANDS: Record<string, () => Promise<void>> = {
-	discover,
-	check,
-	build,
-	'deploy-discover': deployDiscover,
-	'deploy-anchor': deployAnchor,
-	'deploy-build': deployBuild,
-	'deploy-release': deployRelease,
-}
-const USAGE_ERROR = 2
-const COMMAND_ARGUMENT = 2
+import { leaveWorkspace } from './adapters/relocation.ts'
 
-function report(failure: unknown): void {
-	if (failure instanceof Refusal) {
-		annotateError(failure.message, failure.file)
-		return
-	}
-	annotateError(failure instanceof Error ? failure.message : String(failure))
-}
-
-async function main(name: string | undefined): Promise<number> {
-	const command = name ? COMMANDS[name] : undefined
-	if (!command) {
-		annotateError(
-			`usage: node src/cli.ts <${Object.keys(COMMANDS).join('|')}>`,
-		)
-		return USAGE_ERROR
-	}
-	try {
-		await command()
-		return 0
-	} catch (failure: unknown) {
-		report(failure)
-		return 1
-	}
-}
-
-process.exitCode = await main(process.argv[COMMAND_ARGUMENT])
+// The entry point moves the program out of the workspace, then loads it from where it
+// stays. Nothing of the program runs, and nothing of the project, before the move.
+await import(pathToFileURL(join(leaveWorkspace(), 'src', 'main.ts')).href)

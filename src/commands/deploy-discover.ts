@@ -11,10 +11,7 @@ import { hasFile } from '../adapters/files.ts'
 import { gitHub } from '../adapters/github-api.ts'
 import { hasStandingPullRequest } from '../adapters/github-standing.ts'
 import { writeOutputs, writeSummary } from '../adapters/github.ts'
-import {
-	leaveProjectTree,
-	programRevision,
-} from '../adapters/program-directory.ts'
+import { programRevision, programRoot } from '../adapters/program-directory.ts'
 import { installDependencies } from '../adapters/program-install.ts'
 import { NEXTNODE_FILE } from '../domain/declaration.ts'
 import { deployOutputs, NOTHING_TO_DEPLOY } from '../domain/deploy-outputs.ts'
@@ -46,13 +43,12 @@ export async function deployDiscover(): Promise<void> {
 	const token = takeVariable('GITHUB_TOKEN')
 	const event = readPullRequestEvent()
 	const occasion = occasionOf(event)
-	const programRoot = leaveProjectTree(project)
 	if (occasion === 'elsewhere') return nothing(NOT_A_DEPLOYMENT)
 	if (!hasManifest(project)) return nothing(NOTHING_DECLARED)
 	const checkout = readCheckout(project)
 	const directories = await declaringDirectories(checkout)
 	if (!directories.length) return nothing(NOTHING_DECLARED)
-	await installDependencies(programRoot, 'parsing')
+	await installDependencies(programRoot(), 'parsing')
 	const subjects = await Promise.all(
 		directories.map(directory =>
 			readSubject(project, event.repository, directory),
@@ -81,7 +77,7 @@ export async function deployDiscover(): Promise<void> {
 			commit: event.headSha,
 			rows,
 			standing,
-			programRevision: await programRevision(programRoot),
+			programRevision: await programRevision(),
 		}),
 	)
 }
