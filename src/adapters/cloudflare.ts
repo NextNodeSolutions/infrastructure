@@ -26,6 +26,7 @@ export type Account = {
 }
 
 export type StateBackend = {
+	readonly objectEndpoint: string
 	readonly url: string
 	readonly environment: Readonly<Record<string, string>>
 }
@@ -189,8 +190,10 @@ export async function stateBackend(account: Account): Promise<StateBackend> {
 	)
 	const secretKey = createHash('sha256').update(account.token).digest('hex')
 	maskSecret(secretKey)
+	const endpoint = `${account.id}.r2.cloudflarestorage.com`
 	return {
-		url: `s3://${STATE_BUCKET}?endpoint=${account.id}.r2.cloudflarestorage.com&region=auto&s3ForcePathStyle=true`,
+		objectEndpoint: `https://${endpoint}/${STATE_BUCKET}/`,
+		url: `s3://${STATE_BUCKET}?endpoint=${endpoint}&region=auto&s3ForcePathStyle=true`,
 		environment: {
 			AWS_ACCESS_KEY_ID: decode.string(token, 'id'),
 			AWS_SECRET_ACCESS_KEY: secretKey,

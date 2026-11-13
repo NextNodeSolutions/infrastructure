@@ -1,5 +1,5 @@
 import { scratchDirectory } from '../adapters/artifact-files.ts'
-import { accountOf, stateBackend, tagWorker } from '../adapters/cloudflare.ts'
+import { accountOf, tagWorker } from '../adapters/cloudflare.ts'
 import { inGroup } from '../adapters/github.ts'
 import { waitUntilHealthy } from '../adapters/health.ts'
 import { runInOrder, stream } from '../adapters/processes.ts'
@@ -9,16 +9,12 @@ import { platformCredentials } from '../adapters/vault.ts'
 import { prepareWrangler, readUpload } from '../adapters/wrangler.ts'
 import { applyMigrations, upload } from '../domain/deploy-commands.ts'
 import { short } from '../domain/deploy-selection.ts'
-import {
-	hasResources,
-	NOTHING_PROVISIONED,
-	resourcePlan,
-} from '../domain/resources.ts'
+import { hasResources, NOTHING_PROVISIONED } from '../domain/resources.ts'
 import { migratedDatabases, releaseConfig } from '../domain/wrangler-config.ts'
 
 import { claimWorker } from './release-claims.ts'
 
-import type { Account } from '../adapters/cloudflare.ts'
+import type { Account, StateBackend } from '../adapters/cloudflare.ts'
 import type { RunIdentity } from '../adapters/run-identity.ts'
 import type { Uploaded } from '../adapters/wrangler.ts'
 import type { WorkerDeclaration } from '../domain/declaration.ts'
@@ -30,6 +26,7 @@ import type { Release } from '../domain/wrangler-config.ts'
 
 export type ReleaseContext = {
 	readonly repository: string
+	readonly repositoryId: string
 	readonly root: string
 	readonly artifact: string
 	readonly identity: RunIdentity
@@ -37,6 +34,7 @@ export type ReleaseContext = {
 }
 
 type Stack = {
+	readonly backend: StateBackend
 	readonly project: string
 	readonly stack: string
 }
@@ -52,14 +50,14 @@ export async function releaseWorker(
 	await installDependencies(context.root, 'deploying')
 	const credentials = await platformCredentials(context.identity)
 	const account = accountOf(credentials)
-	const tags = await claimWorker(account, {
+	const { tags, plan, backend } = await claimWorker(account, {
 		repository: context.repository,
+		repositoryId: context.repositoryId,
 		deployable,
 		declaration,
 	})
-	const plan = resourcePlan(deployable, declaration)
 	const provisioned = await provision(
-		{ project: context.repository, stack: deployable.name },
+		{ project: context.repository, stack: deployable.name, backend },
 		plan,
 		credentials,
 	)
@@ -97,13 +95,11 @@ async function provision(
 	credentials: PlatformCredentials,
 ): Promise<Provisioned> {
 	if (!hasResources(plan)) return NOTHING_PROVISIONED
-	const backend = await stateBackend(accountOf(credentials))
 	return inGroup('Provision the databases and buckets', () =>
 		converge({
 			...stack,
 			plan,
 			credentials,
-			backend,
 			workDirectory: scratchDirectory('pulumi'),
 		}),
 	)

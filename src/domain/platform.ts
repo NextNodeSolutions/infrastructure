@@ -18,8 +18,7 @@ export type PlatformCredentials = {
 	readonly [Name in keyof typeof PLATFORM_SECRETS]: string
 }
 
-// Pulumi's state of every project, one stack per deployable. Whoever holds the platform's
-// Cloudflare token reads it, and only the release job does.
+// Only Release reads or writes this bucket, including its immutable ownership claims.
 export const STATE_BUCKET = 'nextnode-deploy-state'
 
 export const NPM_REGISTRY = 'https://registry.npmjs.org'

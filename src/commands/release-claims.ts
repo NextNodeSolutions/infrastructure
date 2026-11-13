@@ -2,18 +2,23 @@ import {
 	hostnameHolder,
 	listZones,
 	recordTypesAt,
+	stateBackend,
 	workerTags,
 } from '../adapters/cloudflare.ts'
+import { reserveOwnership } from '../adapters/resource-ownership.ts'
 import { declarationFile } from '../domain/deployable.ts'
 import { refuseTakenHostname, zoneFor } from '../domain/hostname.ts'
 import { refuseForeignWorker, withOwner } from '../domain/ownership.ts'
+import { resourcePlan } from '../domain/resources.ts'
 
-import type { Account } from '../adapters/cloudflare.ts'
+import type { Account, StateBackend } from '../adapters/cloudflare.ts'
 import type { WorkerDeclaration } from '../domain/declaration.ts'
 import type { Deployable } from '../domain/deployable.ts'
+import type { ResourcePlan } from '../domain/resources.ts'
 
 export type Claim = {
 	readonly repository: string
+	readonly repositoryId: string
 	readonly deployable: Deployable
 	readonly declaration: WorkerDeclaration
 }
@@ -48,14 +53,29 @@ async function refuseTaken(
 	)
 }
 
-// What a release settles before it provisions anything: the Worker's name and its
-// hostname are free or already this deployable's. It answers the tags the Worker carries
-// once uploaded, which keep the ones it had.
+type ClaimedWorker = {
+	readonly tags: readonly string[]
+	readonly backend: StateBackend
+	readonly plan: ResourcePlan
+}
+
 export async function claimWorker(
 	account: Account,
 	claim: Claim,
-): Promise<readonly string[]> {
+): Promise<ClaimedWorker> {
 	const tags = await ownedTags(account, claim)
 	await refuseTaken(account, claim)
-	return tags
+	const { deployable, declaration } = claim
+	const plan = resourcePlan(deployable, declaration)
+	const backend = await stateBackend(account)
+	await reserveOwnership(backend, {
+		owner: `${claim.repositoryId}/${deployable.name}`,
+		keys: [
+			`workers/${deployable.name}`,
+			...(declaration.domain ? [`hostnames/${declaration.domain}`] : []),
+			...plan.databases.map(database => `d1/${database.name}`),
+			...plan.buckets.map(bucket => `r2/${bucket.name}`),
+		],
+	})
+	return { tags, backend, plan }
 }

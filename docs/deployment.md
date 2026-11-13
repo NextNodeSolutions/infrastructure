@@ -91,7 +91,7 @@ sequenceDiagram
     B->>G: upload what the build left, as plain files
     R->>G: download those files
     R->>G: read the declaration at the commit
-    Note over R,G: refused unless this is the standing pull request, the commit derives the same name, the files are plain files and no newer commit is deployed
+    Note over R,G: refused unless this is the standing pull request, the commit is the default branch tip, it derives the same name and the files are plain files
     R->>G: record the deployment as in progress
     R->>R: release the Worker or publish the package
     R->>G: record success with the address, or failure with the cause
@@ -113,6 +113,7 @@ sequenceDiagram
     R->>V: log in with a token that names the run, read the platform credentials
     R->>C: read the Worker's tags and what holds the hostname
     Note over R,C: refused when another repository deploys that Worker, or the hostname serves something else
+    R->>C: reserve resource names with create-only writes in the private state bucket
     opt the file binds databases or buckets
         R->>C: create the missing ones through Pulumi
     end
@@ -129,6 +130,10 @@ sequenceDiagram
 The release writes Wrangler's configuration itself. The file's own keys keep their meaning, the names and ids come from the repository, and the code is the bundle the build made, uploaded without being bundled again. So what serves is byte for byte what the Build job produced.
 
 Databases and buckets go through Pulumi, with one project per repository and one stack per deployable, because they outlive a deployment and need a record of what exists. The state lives in a bucket of the platform's Cloudflare account, encrypted with a passphrase from the vault. A binding removed from the file leaves its database or bucket in the account for a person to delete: a release creates data stores and never deletes one.
+
+Before provisioning or uploading, the release reserves each Worker, hostname, database and bucket name in the private state bucket. A claim names the immutable GitHub repository id and the deployable. R2's [conditional writes](https://developers.cloudflare.com/r2/api/s3/conditional-operations/#atomicity) create it only when absent, so competing repositories cannot both reserve a name. A retry by the same owner is accepted. An uncertain write fails the release instead of assuming the name is free.
+
+Claims remain after a failed release or a removed binding. Reassigning a name requires a separate owner-approved operation, not an edit of `nextnode.toml`. These claims coordinate this pipeline, not manual account changes or other deployment systems.
 
 A deployment is done when what was deployed answers. Any answer below a client error counts, a redirect included, and a hostname attached for the first time is given the time its certificate takes.
 
@@ -182,7 +187,7 @@ Every failed state leaves the baseline where it was. Merging a fix, or re-runnin
 | The release is refused before it records anything                    | Nothing changed anywhere.                                                                               | What the message says.                                             |
 | A run is started after another commit becomes the default branch tip | It refuses before dependency installation or credentials and records nothing. What serves is unchanged. | Nothing.                                                           |
 | The vault refuses the login                                          | A failed deployment record. Nothing changed in Cloudflare.                                              | The run is not the `Deploy` workflow on the standing pull request. |
-| Another repository deploys the Worker, or the hostname is taken      | A failed record. Nothing changed in Cloudflare.                                                         | Rename the package, or choose another domain.                      |
+| Another repository deploys the Worker, or the hostname is taken      | A failed record. Existing Workers, DNS and data stores stay unchanged. Any new ownership claims remain. | Rename the package, or choose another domain.                      |
 | Provisioning stops midway                                            | What was created stays and the state records it. The previous version serves.                           | Re-run the failed jobs.                                            |
 | A migration fails                                                    | The migrations applied before it stay applied. The previous code serves on that database.               | Merge a fixed migration.                                           |
 | The upload fails                                                     | The migrations are applied. The previous version serves.                                                | Re-run the failed jobs.                                            |
@@ -231,6 +236,7 @@ The Cloudflare token reaches the whole account, so the program is what confines 
 - **A file names no resource.** It has no key for a Worker name, an account, a database id or a bucket name. The program derives every name from the repository and the package.
 - **A Worker carries the repository that deploys it**, as a tag, and a release uploads over no Worker that carries another repository's. Two repositories can derive the same name, and the account has one namespace for all of them. A Worker made before the pipeline carries no tag and is taken by the first release to its name.
 - **A hostname is taken only when nothing holds it**: no other Worker and no DNS record, in a zone of the account.
+- **Names are reserved before account changes.** Create-only R2 records bind Worker, hostname, database and bucket names to an immutable repository id and deployable. Reservations do not expire, so a slow release cannot lose its reservation to another project.
 - **A tarball is published only as the package and version the commit declares.**
 
 What crosses from the project into the Release job, and how it is taken:
@@ -264,11 +270,12 @@ Two limits are stated rather than closed. A re-run uses the program of its first
 
 A guarantee is checked by an attack that must fail, on the canaries, after any change to these jobs.
 
-| Guarantee                                      | Probe                                                                                                                                            |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Only the standing pull request deploys         | Open a pull request from another branch into `deployments`. Discover fails, no build and no release start, no deployment is recorded.            |
-| A tarball cannot configure authenticated npm   | Pack a manifest with `publishConfig` containing proxy and TLS settings. Reading it refuses before requesting a token.                            |
-| The vault admits the Deploy workflow alone     | The single-package canary keeps a workflow of its own that asks for the Deploy login and passes only when the vault refuses.                     |
-| An old run deploys nothing over a newer commit | Re-run the failed or finished Release job of an older run after a newer one succeeded. It refuses and records nothing.                           |
-| A selection reaches only what changed          | Merge a change to one app of the workspace canary, then to its shared package. The first releases that app, the second its dependents.           |
-| A deployment heals                             | Close the standing pull request, merge, open a pull request. The warning appears, the standing pull request is reopened, the next merge deploys. |
+| Guarantee                                               | Probe                                                                                                                                            |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Only the standing pull request deploys                  | Open a pull request from another branch into `deployments`. Discover fails, no build and no release start, no deployment is recorded.            |
+| Competing repositories cannot reserve the same resource | Start concurrent create-only claims for the same name under different owners. Exactly one succeeds and the other refuses without replacing it.   |
+| A tarball cannot configure authenticated npm            | Pack a manifest with `publishConfig` containing proxy and TLS settings. Reading it refuses before requesting a token.                            |
+| The vault admits the Deploy workflow alone              | The single-package canary keeps a workflow of its own that asks for the Deploy login and passes only when the vault refuses.                     |
+| An old run deploys nothing over a newer commit          | Re-run the failed or finished Release job of an older run after a newer one succeeded. It refuses and records nothing.                           |
+| A selection reaches only what changed                   | Merge a change to one app of the workspace canary, then to its shared package. The first releases that app, the second its dependents.           |
+| A deployment heals                                      | Close the standing pull request, merge, open a pull request. The warning appears, the standing pull request is reopened, the next merge deploys. |

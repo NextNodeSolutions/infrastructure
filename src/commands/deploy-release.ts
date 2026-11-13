@@ -64,6 +64,7 @@ export async function deployRelease(): Promise<void> {
 	refuseAnythingButFiles(artifact)
 	const context = {
 		repository: event.repository,
+		repositoryId: requiredVariable('GITHUB_REPOSITORY_ID'),
 		root,
 		artifact,
 		identity,
