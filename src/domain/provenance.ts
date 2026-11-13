@@ -35,7 +35,7 @@ export type SignedTarball = PublishedAs & {
 }
 
 // The name npm compares with the statement's subject: a scoped name escapes its `@`.
-export function packageUrl({ name, version }: PublishedAs): string {
+function packageUrl({ name, version }: PublishedAs): string {
 	return `pkg:npm/${name.replace(/^@/, '%40')}@${version}`
 }
 
