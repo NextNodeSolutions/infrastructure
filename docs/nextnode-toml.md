@@ -55,7 +55,7 @@ The Worker keys are Wrangler's own, with Wrangler's meaning, so the file is also
 | `[environments.production]` `domain`                        | The hostname the Worker answers at. Without it the Worker answers at its `workers.dev` address. |
 | `[deploy]` `health`                                         | The path a release requests to decide the deployment answers. The root path when absent.        |
 
-A file needs `main`, `[assets]` or both. Every declared path resolves inside the file's directory. Asset and migration directories contain no links or special files. A binding is written in capitals, digits and underscores, and a Worker of static assets binds nothing, since it has no code to bind to.
+A file needs `main`, `[assets]` or both. Every declared path resolves inside the file's directory. Asset and migration directories contain no links or special files. A binding is written in capitals, digits and underscores and ends with a capital or a digit, since the name of its database or bucket ends the same way. A Worker of static assets binds nothing, since it has no code to bind to.
 
 Three things a Wrangler file would name are absent on purpose: the Worker's name, the account, and the id or name of a database or bucket. A file that cannot name a resource cannot reach another project's.
 

@@ -38,7 +38,7 @@ const DEFAULT_HEALTH_PATH = '/'
 const HOSTNAME =
 	/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/
 const COMPATIBILITY_DATE = /^\d{4}-\d{2}-\d{2}$/
-const BINDING = /^[A-Z][A-Z0-9_]*$/
+const BINDING = /^[A-Z](?:[A-Z0-9_]*[A-Z0-9])?$/
 
 export function decodeWorker(
 	fields: Fields,
@@ -139,7 +139,7 @@ function decodeBinding(entry: Fields, { decode, refuse }: Decoding): string {
 	const binding = decode.string(entry, 'binding')
 	if (!BINDING.test(binding)) {
 		throw refuse(
-			`the binding ${binding} must be written in capitals, digits and underscores`,
+			`the binding ${binding} must be written in capitals, digits and underscores, and end with a capital or a digit`,
 		)
 	}
 	return binding
