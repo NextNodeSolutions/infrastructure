@@ -11,6 +11,9 @@ const GITHUB_REMOTE =
 	/^(?:[a-z][a-z+]*:\/\/)?(?:[^@/\s]+@)?github\.com(?::\d+)?[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i
 // Staged and never approved, so nothing installs it, at a prerelease no release declares.
 const PLACEHOLDER = { version: '0.0.0-placeholder', tag: 'placeholder' }
+// The public version npm shows for a package that exists only as a stage.
+const NPM_STAGE_VERSION = '0.0.0-stage'
+const STAGING_VERSIONS = [NPM_STAGE_VERSION, PLACEHOLDER.version]
 
 export type SetupOutcome =
 	| { readonly kind: 'nothing to publish'; readonly published: PublishedAs }
@@ -30,6 +33,14 @@ export function githubRepository(remote: string): string {
 	}
 	const [, owner, name] = parts
 	return `${owner}/${name}`
+}
+
+// Staging takes both versions for good, so a release that declares one could never publish.
+export function refuseStagingVersion(published: PublishedAs): void {
+	if (!STAGING_VERSIONS.includes(published.version)) return
+	throw new Error(
+		`${published.name}: creating the package takes ${STAGING_VERSIONS.join(' and ')} on npm, so it could never publish ${published.version}. Declare another version, then run this again.`,
+	)
 }
 
 export function placeholderManifest(
@@ -123,7 +134,7 @@ function outcomeLine(
 	if (outcome.kind === 'trusted already')
 		return `${name}: npm already trusts ${repository} ${DEPLOY_WORKFLOW_FILE}. Nothing changed. A trust that never published within ${VALIDATION_HOURS} hours of being set has expired, and the release of ${version} refuses it: then delete it in the package's settings on npmjs.com and run this again.`
 	const created = outcome.isStaged
-		? `created with npm's public 0.0.0-stage placeholder (the staged ${PLACEHOLDER.version} behind it stays unapproved and installs nothing), `
+		? `created with npm's public ${NPM_STAGE_VERSION} placeholder (the staged ${PLACEHOLDER.version} behind it stays unapproved and installs nothing), `
 		: ''
 	return `${name}: ${created}npm now trusts ${repository} ${DEPLOY_WORKFLOW_FILE}. The next Deploy run that reaches it publishes ${version}: merge before ${deadline}. Past that the trust expires: delete it in the package's settings on npmjs.com, then run this again.`
 }

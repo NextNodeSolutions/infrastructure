@@ -19,6 +19,7 @@ import { NEXTNODE_FILE } from '../domain/declaration.ts'
 import {
 	APPROVAL_HINT,
 	githubRepository,
+	refuseStagingVersion,
 	setupIntro,
 	setupReport,
 	TERMINAL_REQUIRED,
@@ -58,7 +59,12 @@ async function isTrusted(name: string, repository: string): Promise<boolean> {
 	return false
 }
 
-async function createPackage(name: string, repository: string): Promise<void> {
+async function createPackage(
+	published: PublishedAs,
+	repository: string,
+): Promise<void> {
+	refuseStagingVersion(published)
+	const { name } = published
 	await stagePackage(name, repository)
 	const registered = await until(
 		async () => ((await isRegistered(name)) ? { name } : undefined),
@@ -74,7 +80,7 @@ async function setUp(
 	repository: string,
 ): Promise<SetupOutcome> {
 	const isStaged = !(await isRegistered(published.name))
-	if (isStaged) await createPackage(published.name, repository)
+	if (isStaged) await createPackage(published, repository)
 	if (await isTrusted(published.name, repository))
 		return { kind: 'trusted already', published }
 	await trustDeployWorkflow(published.name, repository)
