@@ -166,13 +166,7 @@ function decodeVariables(
 	fields: Fields,
 	{ decode }: Decoding,
 ): Readonly<Record<string, string>> {
-	const variables = decode.optionalRecord(fields, 'vars') ?? {}
-	return Object.fromEntries(
-		Object.keys(variables).map(name => [
-			name,
-			decode.string(variables, name),
-		]),
-	)
+	return decode.stringRecord(fields.vars ?? {}, 'vars')
 }
 
 function decodeDomain(

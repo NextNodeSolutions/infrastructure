@@ -3,6 +3,10 @@ export type Fields = Record<string, unknown>
 export type Decoder = {
 	readonly record: (parsed: unknown, what: string) => Fields
 	readonly string: (fields: Fields, key: string) => string
+	readonly stringRecord: (
+		parsed: unknown,
+		what: string,
+	) => Readonly<Record<string, string>>
 	readonly optionalString: (fields: Fields, key: string) => string | undefined
 	readonly oneOf: <Value extends string>(
 		fields: Fields,
@@ -25,7 +29,12 @@ export type Decoder = {
 type Invalid = (message: string) => Error
 type Scalars = Pick<
 	Decoder,
-	'record' | 'string' | 'optionalString' | 'oneOf' | 'optionalRecord'
+	| 'record'
+	| 'string'
+	| 'stringRecord'
+	| 'optionalString'
+	| 'oneOf'
+	| 'optionalRecord'
 >
 type Lists = Omit<Decoder, keyof Scalars>
 
@@ -52,6 +61,12 @@ function scalars(invalid: Invalid, container: string): Scalars {
 	return {
 		record,
 		string,
+		stringRecord: (parsed, what) => {
+			const fields = record(parsed, what)
+			return Object.fromEntries(
+				Object.keys(fields).map(key => [key, string(fields, key)]),
+			)
+		},
 		optionalString: (fields, key) =>
 			key in fields ? string(fields, key) : undefined,
 		oneOf: (fields, key, accepted, label = key) => {

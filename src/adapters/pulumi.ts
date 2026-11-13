@@ -87,14 +87,8 @@ function importsOf(
 }
 
 function databaseIdsOf(output: unknown): Provisioned {
-	const ids = decode.record(output, 'the databases of the stack')
 	return {
-		databaseIds: Object.fromEntries(
-			Object.keys(ids).map(binding => [
-				binding,
-				decode.string(ids, binding),
-			]),
-		),
+		databaseIds: decode.stringRecord(output, 'the databases of the stack'),
 	}
 }
 
