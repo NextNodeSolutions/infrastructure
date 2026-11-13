@@ -14,6 +14,11 @@ import { occasionOf } from '../domain/occasion.ts'
 
 import { survey } from './deploy-survey.ts'
 
+function nothing(summary: string): void {
+	writeOutputs(NOTHING_TO_DEPLOY)
+	writeSummary(summary)
+}
+
 // The job that decides what a run deploys. It reads the project's files and runs its
 // package manager, so its token only reads: what it decides is a request to the release,
 // which reads the commit again before it acts. A pull request that is not the standing
@@ -23,14 +28,12 @@ export async function deployDiscover(): Promise<void> {
 	const event = readPullRequestEvent()
 	const api = takeGitHub(event)
 	if (occasionOf(event) !== 'release') {
-		writeOutputs(NOTHING_TO_DEPLOY)
-		writeSummary(NOT_STANDING)
+		nothing(NOT_STANDING)
 		return
 	}
 	const surveyed = await survey(project, event, api)
 	if (!surveyed) {
-		writeOutputs(NOTHING_TO_DEPLOY)
-		writeSummary(NOTHING_DECLARED)
+		nothing(NOTHING_DECLARED)
 		return
 	}
 	const { checkout, rows } = surveyed
