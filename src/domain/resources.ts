@@ -1,5 +1,5 @@
 import { declarationFile } from './deployable.ts'
-import { Refusal } from './refusal.ts'
+import { refusal } from './refusal.ts'
 
 import type { WorkerDeclaration } from './declaration.ts'
 import type { Deployable } from './deployable.ts'
@@ -42,9 +42,9 @@ export function resourcePlan(
 		const name = `${deployable.name}-${binding.toLowerCase().replaceAll('_', '-')}`
 		if (name.length > LONGEST_NAME) {
 			const file = declarationFile(deployable.directory)
-			throw new Refusal(
+			throw refusal(
 				file,
-				`${file}: the binding ${binding} would create ${name}, longer than ${LONGEST_NAME} characters. Shorten the binding`,
+				`the binding ${binding} would create ${name}, longer than ${LONGEST_NAME} characters. Shorten the binding`,
 			)
 		}
 		return { binding, name }

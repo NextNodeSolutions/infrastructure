@@ -1,17 +1,17 @@
 import { PACKAGE_ACCESSES } from './declaration.ts'
 import { decoder } from './decode.ts'
 import { decodeWorker, WORKER_KEYS } from './nextnode-worker.ts'
-import { Refusal } from './refusal.ts'
+import { refusal } from './refusal.ts'
 
 import type { Declaration, PackageDeclaration } from './declaration.ts'
 import type { Fields } from './decode.ts'
 import type { Decoding } from './nextnode-worker.ts'
+import type { Refusal } from './refusal.ts'
 
 const PACKAGE_KEY = 'package'
 
 export function decodeNextnodeToml(parsed: unknown, file: string): Declaration {
-	const refuse = (message: string): Refusal =>
-		new Refusal(file, `${file}: ${message}`)
+	const refuse = (message: string): Refusal => refusal(file, message)
 	const decoding = { decode: decoder(refuse, 'a table'), refuse }
 	const fields = decoding.decode.record(parsed, 'the file')
 	decoding.decode.onlyKeys(fields, [...WORKER_KEYS, PACKAGE_KEY], 'the file')

@@ -5,7 +5,7 @@ import { decoder } from '../domain/decode.ts'
 import { printPackedManifest } from '../domain/deploy-commands.ts'
 import { decodeManifest } from '../domain/manifest.ts'
 import { NPM_REGISTRY } from '../domain/platform.ts'
-import { Refusal } from '../domain/refusal.ts'
+import { refusal } from '../domain/refusal.ts'
 
 import { toolEnvironment } from './environment.ts'
 import { maskSecret } from './github.ts'
@@ -55,9 +55,9 @@ export async function packedManifest(
 	const parsed: unknown = JSON.parse(printed)
 	const manifest = decode.record(parsed, PACKED_MANIFEST)
 	if ('publishConfig' in manifest) {
-		throw new Refusal(
+		throw refusal(
 			file,
-			`${file}: the package must not carry publishConfig. Remove it, because the platform supplies all publishing configuration`,
+			`the package must not carry publishConfig. Remove it, because the platform supplies all publishing configuration`,
 		)
 	}
 	return decodeManifest(manifest, PACKED_MANIFEST)

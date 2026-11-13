@@ -6,7 +6,7 @@ import { declarationFile } from '../domain/deployable.ts'
 import { ROOT_DIRECTORY } from '../domain/directory.ts'
 import { executorFor, TURBO_FILE, WORKSPACE_FILE } from '../domain/executor.ts'
 import { manifestFile } from '../domain/manifest.ts'
-import { Refusal } from '../domain/refusal.ts'
+import { refusal } from '../domain/refusal.ts'
 import { subjectOf } from '../domain/subject.ts'
 import { readToolchain } from '../domain/toolchain.ts'
 
@@ -49,9 +49,9 @@ export async function declaringDirectories(
 	const hasRootFile = hasFile(join(project, NEXTNODE_FILE))
 	if (executor === 'single') return hasRootFile ? [ROOT_DIRECTORY] : []
 	if (hasRootFile) {
-		throw new Refusal(
+		throw refusal(
 			NEXTNODE_FILE,
-			`${NEXTNODE_FILE}: a workspace declares what it deploys in its packages, one ${NEXTNODE_FILE} beside each package.json, never at the root`,
+			`a workspace declares what it deploys in its packages, one ${NEXTNODE_FILE} beside each package.json, never at the root`,
 		)
 	}
 	const members = await listWorkspace(project, toolchain.pnpmVersion, [])

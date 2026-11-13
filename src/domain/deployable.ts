@@ -2,7 +2,7 @@ import { NEXTNODE_FILE } from './declaration.ts'
 import { decoder } from './decode.ts'
 import { fileIn, ROOT_DIRECTORY } from './directory.ts'
 import { EXECUTORS } from './executor.ts'
-import { Refusal } from './refusal.ts'
+import { refusal } from './refusal.ts'
 
 import type { Declaration } from './declaration.ts'
 import type { Executor } from './executor.ts'
@@ -43,9 +43,9 @@ export function deployableFor(
 	const file = declarationFile(directory)
 	const isRoot = directory === ROOT_DIRECTORY
 	if (!isRoot && placement.package === '') {
-		throw new Refusal(
+		throw refusal(
 			file,
-			`${file}: the package.json beside it must have a name, which names what is deployed`,
+			`the package.json beside it must have a name, which names what is deployed`,
 		)
 	}
 	const name = (
@@ -54,9 +54,9 @@ export function deployableFor(
 			: `${repository}-${placement.package.replace(SCOPE, '')}`
 	).toLowerCase()
 	if (!NAME.test(name)) {
-		throw new Refusal(
+		throw refusal(
 			file,
-			`${file}: it would deploy as ${name}, and a name takes lowercase letters, digits and dashes, 63 at most. Rename the package or the repository`,
+			`it would deploy as ${name}, and a name takes lowercase letters, digits and dashes, 63 at most. Rename the package or the repository`,
 		)
 	}
 	return { name, kind, directory, package: placement.package }
@@ -74,9 +74,9 @@ export function refuseSharedNames(deployables: readonly Deployable[]): void {
 	if (!clash) return
 	const { earlier, later } = clash
 	const file = declarationFile(later.directory)
-	throw new Refusal(
+	throw refusal(
 		file,
-		`${file}: the package ${later.package} would deploy as ${later.name}, like the package ${earlier.package} in ${earlier.directory}. Rename one of them, so that each deploys under a name of its own`,
+		`the package ${later.package} would deploy as ${later.name}, like the package ${earlier.package} in ${earlier.directory}. Rename one of them, so that each deploys under a name of its own`,
 	)
 }
 

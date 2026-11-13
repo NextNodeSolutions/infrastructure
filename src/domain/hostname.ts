@@ -1,4 +1,4 @@
-import { Refusal } from './refusal.ts'
+import { refusal } from './refusal.ts'
 
 export type Zone = {
 	readonly id: string
@@ -37,24 +37,24 @@ export function refuseTakenHostname(claim: HostnameClaim, file: string): void {
 	const { hostname, worker, holder } = claim
 	if (holder === worker) return
 	if (holder) {
-		throw new Refusal(
+		throw refusal(
 			file,
-			`${file}: ${hostname} already serves the Worker ${holder}. Choose another domain, or detach it from ${holder} in Cloudflare first`,
+			`${hostname} already serves the Worker ${holder}. Choose another domain, or detach it from ${holder} in Cloudflare first`,
 		)
 	}
 	if (!claim.zone) {
-		throw new Refusal(
+		throw refusal(
 			file,
-			`${file}: no zone of the Cloudflare account holds ${hostname}. Choose a domain under a zone of the account`,
+			`no zone of the Cloudflare account holds ${hostname}. Choose a domain under a zone of the account`,
 		)
 	}
 	const answering = claim.recordTypes.filter(type =>
 		ADDRESS_RECORDS.has(type),
 	)
 	if (answering.length) {
-		throw new Refusal(
+		throw refusal(
 			file,
-			`${file}: ${hostname} already has an address record (${answering.join(', ')}). Choose another domain, or delete the record in Cloudflare first`,
+			`${hostname} already has an address record (${answering.join(', ')}). Choose another domain, or delete the record in Cloudflare first`,
 		)
 	}
 }

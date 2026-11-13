@@ -1,5 +1,5 @@
 import { decoder } from '../domain/decode.ts'
-import { Refusal } from '../domain/refusal.ts'
+import { refusal } from '../domain/refusal.ts'
 
 import { fieldsOf, isSuccess, send } from './http.ts'
 
@@ -64,9 +64,9 @@ async function reserveName(
 		'owner',
 	)
 	if (holder === owner) return
-	throw new Refusal(
+	throw refusal(
 		file,
-		`${file}: ${key} is reserved by ${holder}, not ${owner}. Choose another name; no existing claim is replaced`,
+		`${key} is reserved by ${holder}, not ${owner}. Choose another name; no existing claim is replaced`,
 	)
 }
 

@@ -11,7 +11,7 @@ import {
 } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
-import { Refusal } from '../domain/refusal.ts'
+import { refusal } from '../domain/refusal.ts'
 
 import { requiredVariable } from './environment.ts'
 
@@ -37,9 +37,9 @@ export function confinedPath(
 ): string {
 	const source = join(directory, declared)
 	if (!existsSync(source)) {
-		throw new Refusal(
+		throw refusal(
 			file,
-			`${file}: ${declared} does not exist after the build. Name a path the repository holds or the build writes`,
+			`${declared} does not exist after the build. Name a path the repository holds or the build writes`,
 		)
 	}
 	const resolved = relative(realpathSync(directory), realpathSync(source))
@@ -48,9 +48,9 @@ export function confinedPath(
 		resolved === '..' ||
 		resolved.startsWith(`..${sep}`)
 	) {
-		throw new Refusal(
+		throw refusal(
 			file,
-			`${file}: ${declared} resolves outside the deployable's directory. Use a path inside it`,
+			`${declared} resolves outside the deployable's directory. Use a path inside it`,
 		)
 	}
 	return source

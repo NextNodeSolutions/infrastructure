@@ -7,3 +7,7 @@ export class Refusal extends Error {
 		this.file = file
 	}
 }
+
+export function refusal(file: string, reason: string): Refusal {
+	return new Refusal(file, `${file}: ${reason}`)
+}

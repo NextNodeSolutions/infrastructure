@@ -1,7 +1,7 @@
 import { declarationFile, deployableFor } from './deployable.ts'
 import { decodeManifest, manifestFile } from './manifest.ts'
 import { decodeNextnodeToml } from './nextnode-toml.ts'
-import { Refusal } from './refusal.ts'
+import { refusal } from './refusal.ts'
 import { NO_RESOURCES, resourcePlan } from './resources.ts'
 
 import type { Declaration } from './declaration.ts'
@@ -55,9 +55,9 @@ export function publishedAs(subject: Subject): PublishedAs {
 	const file = manifestFile(subject.deployable.directory)
 	const { name, version } = subject.manifest
 	if (!name || !version) {
-		throw new Refusal(
+		throw refusal(
 			file,
-			`${file}: a package that is published needs a name and a version`,
+			`a package that is published needs a name and a version`,
 		)
 	}
 	return { name, version }

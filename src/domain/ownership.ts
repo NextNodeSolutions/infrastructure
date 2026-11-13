@@ -1,4 +1,4 @@
-import { Refusal } from './refusal.ts'
+import { refusal } from './refusal.ts'
 
 import type { ResourcePlan } from './resources.ts'
 
@@ -31,9 +31,9 @@ export function refuseForeignWorker(claim: WorkerClaim, file: string): void {
 	if (!tags || tags.includes(ownerTag(repository))) return
 	const other = tags.find(tag => tag.startsWith(OWNER))
 	if (!other) return
-	throw new Refusal(
+	throw refusal(
 		file,
-		`${file}: the Worker ${worker} is deployed by the repository ${other.slice(OWNER.length)}. Rename the package, so that this one deploys under a name of its own`,
+		`the Worker ${worker} is deployed by the repository ${other.slice(OWNER.length)}. Rename the package, so that this one deploys under a name of its own`,
 	)
 }
 

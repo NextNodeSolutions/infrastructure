@@ -1,6 +1,6 @@
 import { decoder } from './decode.ts'
 import { fileIn } from './directory.ts'
-import { Refusal } from './refusal.ts'
+import { refusal } from './refusal.ts'
 
 import type { Decoder } from './decode.ts'
 
@@ -19,7 +19,7 @@ export function manifestFile(directory: string): string {
 }
 
 export function decodeManifest(parsed: unknown, file: string): Manifest {
-	const decode = decoder(message => new Refusal(file, `${file}: ${message}`))
+	const decode = decoder(message => refusal(file, message))
 	const fields = decode.record(parsed, file)
 	return {
 		name: decode.optionalString(fields, 'name'),

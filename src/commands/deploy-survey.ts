@@ -12,7 +12,7 @@ import { programRoot } from '../adapters/relocation.ts'
 import { NEXTNODE_FILE } from '../domain/declaration.ts'
 import { refuseSharedNames } from '../domain/deployable.ts'
 import { MANIFEST_FILE } from '../domain/manifest.ts'
-import { Refusal } from '../domain/refusal.ts'
+import { refusal } from '../domain/refusal.ts'
 
 import { planRows } from './deploy-verdicts.ts'
 
@@ -29,9 +29,9 @@ export type Survey = {
 function hasManifest(project: string): boolean {
 	if (hasFile(join(project, MANIFEST_FILE))) return true
 	if (!hasFile(join(project, NEXTNODE_FILE))) return false
-	throw new Refusal(
+	throw refusal(
 		NEXTNODE_FILE,
-		`${NEXTNODE_FILE}: a repository that deploys needs a ${MANIFEST_FILE} at its root, with packageManager and engines.node`,
+		`a repository that deploys needs a ${MANIFEST_FILE} at its root, with packageManager and engines.node`,
 	)
 }
 
