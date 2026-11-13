@@ -7,7 +7,8 @@ import type { PublishedAs } from './subject.ts'
 const HOUR_MS = 3_600_000
 // npm drops a trusted publisher that has not published within two days of being set.
 const VALIDATION_HOURS = 48
-const GITHUB_REMOTE = /github\.com[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/
+const GITHUB_REMOTE =
+	/^(?:[a-z][a-z+]*:\/\/)?(?:[^@/\s]+@)?github\.com(?::\d+)?[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i
 // Staged and never approved, so nothing installs it, at a prerelease no release declares.
 const PLACEHOLDER = { version: '0.0.0-placeholder', tag: 'placeholder' }
 
