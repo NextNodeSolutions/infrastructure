@@ -11,6 +11,7 @@ name: Deploy plan
 
 on:
     pull_request:
+        types: [opened, synchronize, reopened, closed]
 
 permissions:
     contents: read
