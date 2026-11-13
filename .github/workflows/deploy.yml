@@ -94,7 +94,7 @@ jobs:
                   include-hidden-files: true
                   if-no-files-found: error
                   overwrite: true
-                  retention-days: 1
+                  retention-days: 7
 
     release:
         name: Release ${{ matrix.name }}

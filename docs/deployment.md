@@ -176,7 +176,7 @@ stateDiagram-v2
     Serving --> [*]
 ```
 
-Every failed state leaves the baseline where it was. Merging a fix, or re-running the failed jobs of the run, deploys everything since the last success.
+Every failed state leaves the baseline where it was. Merging a fix, or re-running the failed jobs of the run, deploys everything since the last success. A re-run of the failed Release jobs uploads the build the run kept, for as long as the workflow keeps its artifacts; past that, re-run all jobs.
 
 ### What a failure leaves
 
