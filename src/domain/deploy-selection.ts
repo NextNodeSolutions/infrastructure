@@ -6,9 +6,7 @@ const SHORT_COMMIT = 7
 export type Changed = 'everything' | readonly string[]
 
 export type Since =
-	| { readonly relation: 'same' }
-	| { readonly relation: 'newer' }
-	| { readonly relation: 'unrelated' }
+	| { readonly relation: 'same' | 'newer' | 'unrelated' }
 	| { readonly relation: 'older'; readonly changed: Changed }
 
 export type Verdict = {
@@ -33,6 +31,14 @@ export function verdictFor(
 	since: Since,
 ): Verdict {
 	const at = short(deployed)
+	if (since.relation === 'older') {
+		const isReached =
+			since.changed === 'everything' ||
+			since.changed.includes(deployable.package)
+		return isReached
+			? { deploys: true, reason: `changed since ${at}` }
+			: { deploys: false, reason: `unchanged since ${at}` }
+	}
 	if (since.relation === 'same')
 		return { deploys: false, reason: 'already deployed at this commit' }
 	if (since.relation === 'newer') {
@@ -41,18 +47,10 @@ export function verdictFor(
 			reason: `the newer commit ${at} is already deployed`,
 		}
 	}
-	if (since.relation === 'unrelated') {
-		return {
-			deploys: true,
-			reason: `the deployed commit ${at} is not in this history`,
-		}
+	return {
+		deploys: true,
+		reason: `the deployed commit ${at} is not in this history`,
 	}
-	const isReached =
-		since.changed === 'everything' ||
-		since.changed.includes(deployable.package)
-	return isReached
-		? { deploys: true, reason: `changed since ${at}` }
-		: { deploys: false, reason: `unchanged since ${at}` }
 }
 
 export type Publication = {

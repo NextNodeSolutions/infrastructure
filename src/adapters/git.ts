@@ -1,5 +1,7 @@
 import { capture, succeeds } from './processes.ts'
 
+import type { Since } from '../domain/deploy-selection.ts'
+
 export async function revisionAt(cwd: string): Promise<string> {
 	const revision = await capture(
 		{ program: 'git', args: ['rev-parse', 'HEAD'] },
@@ -7,8 +9,6 @@ export async function revisionAt(cwd: string): Promise<string> {
 	)
 	return revision.trim()
 }
-
-export type Relation = 'same' | 'older' | 'newer' | 'unrelated'
 
 function isAncestor(
 	ancestor: string,
@@ -30,7 +30,7 @@ export async function relationToHead(
 	commit: string,
 	head: string,
 	cwd: string,
-): Promise<Relation> {
+): Promise<Since['relation']> {
 	if (commit === head) return 'same'
 	if (await isAncestor(commit, head, cwd)) return 'older'
 	return (await isAncestor(head, commit, cwd)) ? 'newer' : 'unrelated'
