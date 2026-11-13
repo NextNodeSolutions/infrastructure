@@ -6,7 +6,10 @@ import { fieldsOf, isSuccess, NOT_FOUND, recordsOf } from './http.ts'
 import type { Fields } from '../domain/decode.ts'
 import type { GitHub } from './github-api.ts'
 
+// The workflow file and the name its Release job takes per deployable: a run proves a
+// release only through these two, so they change together with deploy.yml.
 const DEPLOY_WORKFLOW = '.github/workflows/deploy.yml'
+const releaseJob = (environment: string): string => `Release ${environment}`
 const RUN_ID = /\/actions\/runs\/(\d+)(?:\/attempts\/\d+)?$/
 const decode = decoder(message => new Error(`GitHub release proof: ${message}`))
 
@@ -33,7 +36,7 @@ async function hasSuccessfulRelease(
 			Promise.resolve(
 				jobs.some(
 					job =>
-						job.name === `Release ${environment}` &&
+						job.name === releaseJob(environment) &&
 						job.conclusion === 'success',
 				) || undefined,
 			),
