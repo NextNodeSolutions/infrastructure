@@ -23,6 +23,7 @@ import {
 	installProfileOf,
 	pack,
 } from '../domain/deploy-commands.ts'
+import { declarationFile } from '../domain/deployable.ts'
 import { bundlingConfig } from '../domain/wrangler-config.ts'
 
 import { artifactDirectory, requestedDeployable } from './deploy-job.ts'
@@ -33,6 +34,7 @@ type Staging = {
 	readonly programRoot: string
 	readonly name: string
 	readonly directory: string
+	readonly file: string
 	readonly staged: string
 }
 
@@ -55,6 +57,7 @@ export async function deployBuild(): Promise<void> {
 		programRoot: root,
 		name: entry.name,
 		directory: join(project, entry.directory),
+		file: declarationFile(entry.directory),
 		staged: scratchDirectory('artifact'),
 	}
 	await (subject.declaration.kind === 'package'
@@ -74,18 +77,18 @@ async function stageWorker(
 	staging: Staging,
 	declaration: WorkerDeclaration,
 ): Promise<void> {
-	const { directory, staged } = staging
+	const { directory, file, staged } = staging
 	await bundleWorker(staging, declaration)
 	if (declaration.assets) {
 		copyDirectory(
-			confinedPath(directory, declaration.assets.directory),
+			confinedPath(directory, declaration.assets.directory, file),
 			join(staged, ARTIFACT.assets),
 		)
 	}
 	declaration.databases.forEach(database => {
 		if (!database.migrationsDirectory) return
 		copyDirectory(
-			confinedPath(directory, database.migrationsDirectory),
+			confinedPath(directory, database.migrationsDirectory, file),
 			join(staged, migrationsOf(database.binding)),
 		)
 	})
@@ -104,7 +107,7 @@ async function bundleWorker(
 		bundlingConfig(
 			staging.name,
 			declaration,
-			confinedPath(staging.directory, declaration.main),
+			confinedPath(staging.directory, declaration.main, staging.file),
 		),
 	)
 	await inGroup('Bundle the Worker', () =>

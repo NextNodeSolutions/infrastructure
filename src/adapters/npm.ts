@@ -5,6 +5,7 @@ import { decoder } from '../domain/decode.ts'
 import { printPackedManifest } from '../domain/deploy-commands.ts'
 import { decodeManifest } from '../domain/manifest.ts'
 import { NPM_REGISTRY } from '../domain/platform.ts'
+import { Refusal } from '../domain/refusal.ts'
 
 import { toolEnvironment } from './environment.ts'
 import { maskSecret } from './github.ts'
@@ -37,17 +38,19 @@ function registryPath(name: string): string {
 }
 
 // What a tarball says it is. A build ran the project's code, so the release asks before
-// it publishes.
+// it publishes. A refusal names the manifest the tarball was packed from.
 export async function packedManifest(
 	tarball: string,
 	cwd: string,
+	file: string,
 ): Promise<Manifest> {
 	const printed = await capture(printPackedManifest(tarball), cwd)
 	const parsed: unknown = JSON.parse(printed)
 	const manifest = decode.record(parsed, PACKED_MANIFEST)
 	if ('publishConfig' in manifest) {
-		throw new Error(
-			`${PACKED_MANIFEST} must not contain publishConfig: remove it, because the platform supplies all publishing configuration`,
+		throw new Refusal(
+			file,
+			`${file}: the package must not carry publishConfig. Remove it, because the platform supplies all publishing configuration`,
 		)
 	}
 	return decodeManifest(manifest, PACKED_MANIFEST)

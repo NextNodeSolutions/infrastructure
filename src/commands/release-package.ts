@@ -13,6 +13,7 @@ import { until } from '../adapters/wait.ts'
 import { ARTIFACT } from '../domain/artifact.ts'
 import { publish } from '../domain/deploy-commands.ts'
 import { short } from '../domain/deploy-selection.ts'
+import { manifestFile } from '../domain/manifest.ts'
 import { NPM_PACKAGE_PAGE, NPM_REGISTRY } from '../domain/platform.ts'
 import { publishedAs } from '../domain/subject.ts'
 
@@ -28,10 +29,15 @@ const PATIENCE = { everyMs: 3000, forMs: 60_000 }
 // publishes a tarball only as the package and version the commit declares here.
 async function refuseForeignTarball(
 	tarball: string,
-	published: PublishedAs,
+	subject: Subject,
 	cwd: string,
 ): Promise<void> {
-	const packed = await packedManifest(tarball, cwd)
+	const published = publishedAs(subject)
+	const packed = await packedManifest(
+		tarball,
+		cwd,
+		manifestFile(subject.deployable.directory),
+	)
 	if (packed.name === published.name && packed.version === published.version)
 		return
 	throw new Error(
@@ -57,7 +63,7 @@ export async function releasePackage(
 	const published = publishedAs(subject)
 	const tarball = packedTarball(join(context.artifact, ARTIFACT.package))
 	const scratch = scratchDirectory('npm')
-	await refuseForeignTarball(tarball, published, scratch)
+	await refuseForeignTarball(tarball, subject, scratch)
 	const publisher = preparePublisher(
 		scratch,
 		await publishToken(context.identity, published.name),

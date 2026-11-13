@@ -11,6 +11,8 @@ import {
 } from 'node:fs'
 import { isAbsolute, join, relative, sep } from 'node:path'
 
+import { Refusal } from '../domain/refusal.ts'
+
 import { requiredVariable } from './environment.ts'
 
 const TARBALL = '.tgz'
@@ -26,16 +28,29 @@ export function emptyDirectory(path: string): string {
 	return path
 }
 
-export function confinedPath(directory: string, declared: string): string {
+// A path the file declares, read after the build ran: it must exist and stay inside the
+// deployable, links resolved.
+export function confinedPath(
+	directory: string,
+	declared: string,
+	file: string,
+): string {
 	const source = join(directory, declared)
+	if (!existsSync(source)) {
+		throw new Refusal(
+			file,
+			`${file}: ${declared} does not exist after the build. Name a path the repository holds or the build writes`,
+		)
+	}
 	const resolved = relative(realpathSync(directory), realpathSync(source))
 	if (
 		isAbsolute(resolved) ||
 		resolved === '..' ||
 		resolved.startsWith(`..${sep}`)
 	) {
-		throw new Error(
-			`${source} resolves outside ${directory}: use a path inside the deployable`,
+		throw new Refusal(
+			file,
+			`${file}: ${declared} resolves outside the deployable's directory. Use a path inside it`,
 		)
 	}
 	return source
@@ -43,11 +58,6 @@ export function confinedPath(directory: string, declared: string): string {
 
 // Preserving links during the copy lets Release refuse one a concurrent build created.
 export function copyDirectory(source: string, destination: string): void {
-	if (!existsSync(source)) {
-		throw new Error(
-			`${source} does not exist after the build: the file names a directory the build did not write`,
-		)
-	}
 	refuseAnythingButFiles(source)
 	cpSync(source, destination, { recursive: true, dereference: false })
 }
