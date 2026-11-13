@@ -87,9 +87,7 @@ function importsOf(
 }
 
 function databaseIdsOf(output: unknown): Provisioned {
-	return {
-		databaseIds: decode.stringRecord(output, 'the databases of the stack'),
-	}
+	return decode.stringRecord(output, 'the databases of the stack')
 }
 
 function resourcesOf(

@@ -96,7 +96,7 @@ function migrations(
 
 function databases(release: Release): readonly WranglerConfig[] {
 	return release.plan.databases.map(database => {
-		const id = release.provisioned.databaseIds[database.binding]
+		const id = release.provisioned[database.binding]
 		if (!id) {
 			throw new Error(
 				`the database of ${database.binding} was not provisioned before the upload`,
