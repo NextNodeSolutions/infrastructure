@@ -26,7 +26,11 @@ export type Placement = {
 // request and derives everything else from the commit.
 export type DeployEntry = Deployable & { readonly executor: Executor }
 
-const KINDS: readonly Declaration['kind'][] = ['worker', 'package']
+const KIND_OF: { readonly [Kind in Declaration['kind']]: Kind } = {
+	worker: 'worker',
+	package: 'package',
+}
+const KINDS = Object.values(KIND_OF)
 const NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
 const SCOPE = /^@[^/]+\//
 const DIRECTORY = /^(?:\.|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)$/
