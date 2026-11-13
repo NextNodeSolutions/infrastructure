@@ -21,13 +21,14 @@ export function takeVariable(name: string): string {
 
 export type ToolEnvironment = Readonly<Record<string, string>>
 
-// What a tool is started with when it must not inherit the job's variables: the named
-// ones that exist, and nothing else.
-export function onlyVariables(names: readonly string[]): ToolEnvironment {
-	return Object.fromEntries(
-		names.flatMap(name => {
-			const found = process.env[name]
-			return found === undefined ? [] : [[name, found] as const]
-		}),
-	)
+const INHERITED = ['PATH', 'HOME']
+
+// What a tool is started with when it must not inherit the job's variables: the ones
+// it needs to run at all, the ones the program names, and nothing else.
+export function toolEnvironment(named: ToolEnvironment): ToolEnvironment {
+	const inherited = INHERITED.flatMap(name => {
+		const found = process.env[name]
+		return found === undefined ? [] : [[name, found] as const]
+	})
+	return { ...Object.fromEntries(inherited), ...named }
 }

@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { decoder } from '../domain/decode.ts'
 
-import { onlyVariables } from './environment.ts'
+import { toolEnvironment } from './environment.ts'
 
 import type { WranglerConfig } from '../domain/wrangler-config.ts'
 import type { Account } from './cloudflare.ts'
@@ -11,7 +11,6 @@ import type { ToolEnvironment } from './environment.ts'
 
 const CONFIG_FILE = 'wrangler.json'
 const OUTPUT_FILE = 'wrangler-output.ndjson'
-const INHERITED = ['PATH', 'HOME']
 const DEPLOY_ENTRY = 'deploy'
 
 // One run of Wrangler: the binary the program installed, a configuration the platform
@@ -59,13 +58,12 @@ export function prepareWrangler(
 		directory: scratch,
 		config: configPath,
 		output,
-		environment: {
-			...onlyVariables(INHERITED),
+		environment: toolEnvironment({
 			...credentialsOf(account),
 			CI: 'true',
 			WRANGLER_SEND_METRICS: 'false',
 			WRANGLER_OUTPUT_FILE_PATH: output,
-		},
+		}),
 	}
 }
 

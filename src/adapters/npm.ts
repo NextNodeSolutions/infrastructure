@@ -6,7 +6,7 @@ import { printPackedManifest } from '../domain/deploy-commands.ts'
 import { decodeManifest } from '../domain/manifest.ts'
 import { NPM_REGISTRY } from '../domain/platform.ts'
 
-import { onlyVariables } from './environment.ts'
+import { toolEnvironment } from './environment.ts'
 import { maskSecret } from './github.ts'
 import { fieldsOf, isSuccess, messageOf, NOT_FOUND, send } from './http.ts'
 import { capture } from './processes.ts'
@@ -17,7 +17,6 @@ import type { PublishedAs } from '../domain/subject.ts'
 import type { ToolEnvironment } from './environment.ts'
 import type { RunIdentity } from './run-identity.ts'
 
-const INHERITED = ['PATH', 'HOME']
 const REGISTRY_HOST = new URL(NPM_REGISTRY).host
 const TOKEN_VARIABLE = 'NODE_AUTH_TOKEN'
 const CONFIG_FILE = 'npmrc'
@@ -89,10 +88,7 @@ export function preparePublisher(scratch: string, token: string): Publisher {
 	return {
 		directory: scratch,
 		configuration,
-		environment: {
-			...onlyVariables(INHERITED),
-			[TOKEN_VARIABLE]: token,
-		},
+		environment: toolEnvironment({ [TOKEN_VARIABLE]: token }),
 	}
 }
 
