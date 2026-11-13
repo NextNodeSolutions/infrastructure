@@ -29,6 +29,7 @@ const REGISTRY_HOST = new URL(NPM_REGISTRY).host
 const TOKEN_VARIABLE = 'NODE_AUTH_TOKEN'
 const CONFIG_FILE = 'npmrc'
 const PACKED_MANIFEST = 'the package.json of the tarball'
+const SHORT_DOCUMENT = 'application/vnd.npm.install-v1+json'
 
 const decode = decoder(message => new Error(`The npm registry: ${message}`))
 
@@ -120,6 +121,22 @@ export async function latestVersion(name: string): Promise<string | undefined> {
 	const { latest } = fieldsOf(reply, 'The npm registry')
 	if (typeof latest !== 'string') return undefined
 	return latest
+}
+
+// Asked without a credential: a public package has a document once it is published or
+// staged, and the registry answers a scoped name it shows nothing of with 401.
+export async function isRegistered(name: string): Promise<boolean> {
+	const reply = await send({
+		method: 'GET',
+		url: `${NPM_REGISTRY}/${registryPath(name)}`,
+		headers: { accept: SHORT_DOCUMENT },
+	})
+	if (reply.status === NOT_FOUND || reply.status === UNAUTHORIZED)
+		return false
+	if (isSuccess(reply)) return true
+	throw new Error(
+		`The npm registry did not say whether ${name} exists (HTTP ${reply.status})`,
+	)
 }
 
 // Asked without a credential, which sees every version of a public package.

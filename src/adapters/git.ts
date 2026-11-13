@@ -10,6 +10,14 @@ export async function revisionAt(cwd: string): Promise<string> {
 	return revision.trim()
 }
 
+export async function originUrl(cwd: string): Promise<string> {
+	const url = await capture(
+		{ program: 'git', args: ['remote', 'get-url', 'origin'] },
+		cwd,
+	)
+	return url.trim()
+}
+
 function isAncestor(
 	ancestor: string,
 	descendant: string,

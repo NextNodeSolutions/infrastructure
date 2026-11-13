@@ -55,6 +55,39 @@ export async function stream(
 	await spawnCommand(command, cwd, 'streamed', environment)
 }
 
+export type Attempt = {
+	readonly isSuccess: boolean
+	readonly printed: string
+	readonly complaint: string
+}
+
+function collected(chunks: readonly Buffer[]): string {
+	return Buffer.concat(chunks).toString('utf8')
+}
+
+// For a command that may fail as an answer: what it printed and what it complained about,
+// with no terminal attached, so nothing it runs can prompt.
+export function attempt(command: Command, cwd: string): Promise<Attempt> {
+	return new Promise((resolve, reject) => {
+		const child = spawn(command.program, command.args, {
+			cwd,
+			stdio: ['ignore', 'pipe', 'pipe'],
+		})
+		const printed: Buffer[] = []
+		const complaint: Buffer[] = []
+		child.stdout.on('data', (chunk: Buffer) => printed.push(chunk))
+		child.stderr.on('data', (chunk: Buffer) => complaint.push(chunk))
+		child.on('error', reject)
+		child.on('close', code =>
+			resolve({
+				isSuccess: code === 0,
+				printed: collected(printed),
+				complaint: collected(complaint),
+			}),
+		)
+	})
+}
+
 // For a command whose exit code is the answer.
 export function succeeds(command: Command, cwd: string): Promise<boolean> {
 	return new Promise((resolve, reject) => {

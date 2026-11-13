@@ -116,7 +116,10 @@ export type Publishing = {
 	readonly provenance: string | undefined
 }
 
-function scopeRegistry(name: string, registry: string): readonly string[] {
+export function scopeRegistry(
+	name: string,
+	registry: string,
+): readonly string[] {
 	if (!name.startsWith('@')) return []
 	return [`--${name.slice(0, name.indexOf('/'))}:registry=${registry}`]
 }

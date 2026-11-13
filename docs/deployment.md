@@ -160,7 +160,7 @@ sequenceDiagram
     end
 ```
 
-The registry stores no token for the platform and the vault holds none. Each package names its repository and the `Deploy` workflow as its trusted publisher, and the registry trades the run's identity for a token that publishes that package alone for a few minutes. A package release never logs in to the vault.
+The registry stores no token for the platform and the vault holds none. Each package names its repository and the `Deploy` workflow as its trusted publisher, set once by a person through the setup command below, and the registry trades the run's identity for a token that publishes that package alone for a few minutes. A package release never logs in to the vault.
 
 A package from a public repository is published with provenance: a statement signed for this run that names the repository, the commit and the workflow behind the tarball. The program signs it and hands npm the signed file, so npm never holds a token that names the run. A package from a private or internal repository is published without provenance, because the transparency log is public and would carry the repository's name, and because the registry admits provenance from a public repository only. The release summary says which.
 
@@ -218,9 +218,21 @@ Each job writes a summary. Discover lists every deployable with whether it deplo
 2. An organization administrator adds the repository to the include list of the ruleset that requires `Deploy plan` on pull requests and of the ruleset that requires `Deploy` on `deployments` and locks that branch. A repository that only publishes packages needs both as well: a publication is a release.
 3. The next pull request into the default branch that a person opens creates `deployments` and the standing pull request. Its first run waits for one approval.
 4. A repository that deploys a Worker has a default branch named `main` and the token subject format with immutable ids, which GitHub gives every repository created recently and which an older one opts into in its settings. The vault admits on both.
-5. A package exists on the registry before its first release, since the registry attaches a trusted publisher to an existing package. An owner of the scope publishes it once by hand, then names the repository and the workflow file `deploy.yml` as its trusted publisher, with direct publishing allowed. The package's `repository` field names the repository, which the registry checks against the provenance.
+5. A package needs its trusted publisher before the first release that publishes it, and the registry attaches one only to a package that exists and only after a person approves with two-factor authentication. A person with publishing rights on the scope sets it up once per package, from a checkout of this repository with its dependencies installed, in a terminal: `pnpm setup-npm <checkout of the repository>`, on the branch that declares the version to publish. See [Setting up npm](#setting-up-npm). The package's `repository` field names the repository, which the registry checks against the provenance.
 
 Nothing else is created by hand. The first release creates the Worker, its hostname, its databases and buckets and its GitHub environment.
+
+### Setting up npm
+
+`pnpm setup-npm` takes every package that the repository's `nextnode.toml` files declare and whose declared version is not on npm yet. For each one it:
+
+1. Creates the package when the registry has no such name, by staging a placeholder version. npm then shows a public `0.0.0-stage`, and the staged placeholder behind it is never approved, so nothing installs it.
+2. Makes `deploy.yml` of the repository the package's trusted publisher, with direct publishing allowed, unless that trust exists already.
+3. Lists the trust again and fails when it is missing.
+
+It runs npm with the person's own session, in an empty directory, and stores no token. npm asks for one approval in the browser, which works only in a terminal, so the command refuses to start elsewhere. On npm's page, the option that skips two-factor authentication for 5 minutes lets the other packages pass without asking again. To find the declared packages it reads the checkout as Discover does, which lists a workspace with the pnpm version the checkout declares.
+
+The registry lets a new trust publish for two days. A trust that has published nothing by then expires, stays listed, and refuses every release until a person deletes it in the package's settings on npmjs.com. The command therefore skips a package whose declared version is already on npm, and names the deadline for the others: merge the branch before it, so its Deploy run publishes and validates the trust. The registry also keeps one trust per package. A package trusted by another workflow is refused with the command that revokes that trust, for a person who decides the `Deploy` workflow replaces it.
 
 ### Moving a Worker from core
 

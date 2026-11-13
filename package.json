@@ -7,6 +7,7 @@
     "format:check": "oxfmt --check .",
     "lint": "oxlint",
     "prepare": "node .husky/install.mjs",
+    "setup-npm": "node src/setup-npm.ts",
     "type-check": "tsc --noEmit"
   },
   "devDependencies": {
