@@ -26,5 +26,13 @@
   },
   "private": true,
   "packageManager": "pnpm@10.11.0",
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "smol-toml": "1.9.1"
+  },
+  "optionalDependencies": {
+    "@pulumi/cloudflare": "6.24.0",
+    "@pulumi/pulumi": "3.276.0",
+    "wrangler": "4.161.0"
+  }
 }
