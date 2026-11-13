@@ -13,11 +13,6 @@ export type ListedPackage = {
 	readonly directory: string
 }
 
-type Printed = {
-	readonly name: string
-	readonly path: string
-}
-
 // pnpm arrives at the version the project declares, fetched by the npm that Node ships,
 // so discovery needs no package manager installed ahead of it.
 export function throughNpm(pnpmVersion: string): (command: Command) => Command {
@@ -35,13 +30,17 @@ export function throughNpm(pnpmVersion: string): (command: Command) => Command {
 }
 
 // pnpm prints nothing, not an empty list, when no project matches the filter.
-function decodeListing(printed: string): readonly Printed[] {
+function decodeListing(
+	printed: string,
+	project: string,
+): readonly ListedPackage[] {
 	if (printed.trim() === '') return []
 	const decode = decoder(message => new Error(`pnpm ls: ${message}`))
 	const parsed: unknown = JSON.parse(printed)
 	return decode.recordList(parsed, 'the listing').map(fields => ({
 		name: decode.string(fields, 'name'),
-		path: decode.string(fields, 'path'),
+		directory:
+			relative(project, decode.string(fields, 'path')) || ROOT_DIRECTORY,
 	}))
 }
 
@@ -54,8 +53,5 @@ export async function listWorkspace(
 		throughNpm(pnpmVersion)(listPackages(filter)),
 		project,
 	)
-	return decodeListing(printed).map(listed => ({
-		name: listed.name,
-		directory: relative(project, listed.path) || ROOT_DIRECTORY,
-	}))
+	return decodeListing(printed, project)
 }
