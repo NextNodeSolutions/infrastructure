@@ -15,7 +15,6 @@ import { migratedDatabases, releaseConfig } from '../domain/wrangler-config.ts'
 import { claimWorker } from './release-claims.ts'
 
 import type { Account, StateBackend } from '../adapters/cloudflare.ts'
-import type { RunIdentity } from '../adapters/run-identity.ts'
 import type { Uploaded } from '../adapters/wrangler.ts'
 import type { WorkerDeclaration } from '../domain/declaration.ts'
 import type { Fact, Released } from '../domain/deploy-summary.ts'
@@ -23,15 +22,7 @@ import type { PlatformCredentials } from '../domain/platform.ts'
 import type { Provisioned, ResourcePlan } from '../domain/resources.ts'
 import type { Subject } from '../domain/subject.ts'
 import type { Release } from '../domain/wrangler-config.ts'
-
-export type ReleaseContext = {
-	readonly repository: string
-	readonly repositoryId: string
-	readonly root: string
-	readonly artifact: string
-	readonly identity: RunIdentity
-	readonly commit: string
-}
+import type { ReleaseContext } from './deploy-job.ts'
 
 type Stack = {
 	readonly backend: StateBackend

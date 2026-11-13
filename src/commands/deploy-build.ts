@@ -18,13 +18,11 @@ import { prepareWrangler } from '../adapters/wrangler.ts'
 import { ARTIFACT, migrationsOf } from '../domain/artifact.ts'
 import { INSTALL } from '../domain/commands.ts'
 import { bundle, deployableBuild, pack } from '../domain/deploy-commands.ts'
-import { decodeDeployEntry } from '../domain/deployable.ts'
 import { bundlingConfig } from '../domain/wrangler-config.ts'
 
-import type { WorkerDeclaration } from '../domain/declaration.ts'
+import { artifactDirectory, requestedDeployable } from './deploy-job.ts'
 
-const DEPLOYABLE = 'DEPLOYABLE'
-const ARTIFACT_DIRECTORY = 'ARTIFACT'
+import type { WorkerDeclaration } from '../domain/declaration.ts'
 
 type Staging = {
 	readonly programRoot: string
@@ -37,11 +35,8 @@ type Staging = {
 // credential, and what it leaves is plain files for the job that does.
 export async function deployBuild(): Promise<void> {
 	const project = requiredVariable('GITHUB_WORKSPACE')
-	const entry = decodeDeployEntry(
-		JSON.parse(requiredVariable(DEPLOYABLE)),
-		DEPLOYABLE,
-	)
-	const artifact = join(project, requiredVariable(ARTIFACT_DIRECTORY))
+	const entry = requestedDeployable()
+	const artifact = artifactDirectory(project)
 	const root = programRoot()
 	await installDependencies(root, 'parsing')
 	const subject = await readSubject(

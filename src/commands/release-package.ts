@@ -19,7 +19,7 @@ import { publishedAs } from '../domain/subject.ts'
 import type { PackageDeclaration } from '../domain/declaration.ts'
 import type { Released } from '../domain/deploy-summary.ts'
 import type { PublishedAs, Subject } from '../domain/subject.ts'
-import type { ReleaseContext } from './release-worker.ts'
+import type { ReleaseContext } from './deploy-job.ts'
 
 // The registry lists a version a moment after it accepts it.
 const PATIENCE = { everyMs: 3000, forMs: 60_000 }

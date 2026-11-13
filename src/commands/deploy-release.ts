@@ -1,5 +1,3 @@
-import { join } from 'node:path'
-
 import { refuseAnythingButFiles } from '../adapters/artifact-files.ts'
 import { requiredVariable, takeVariable } from '../adapters/environment.ts'
 import { readPullRequestEvent } from '../adapters/event.ts'
@@ -15,11 +13,12 @@ import { takeRunIdentity } from '../adapters/run-identity.ts'
 import { parseToml } from '../adapters/toml.ts'
 import { short } from '../domain/deploy-selection.ts'
 import { renderFailure, renderReleased } from '../domain/deploy-summary.ts'
-import { declarationFile, decodeDeployEntry } from '../domain/deployable.ts'
+import { declarationFile } from '../domain/deployable.ts'
 import { manifestFile } from '../domain/manifest.ts'
 import { refuseUnlessStanding } from '../domain/occasion.ts'
 import { subjectOf } from '../domain/subject.ts'
 
+import { artifactDirectory, requestedDeployable } from './deploy-job.ts'
 import { releasePackage } from './release-package.ts'
 import { releaseWorker } from './release-worker.ts'
 
@@ -28,9 +27,6 @@ import type { DeploymentStatus } from '../adapters/github-deployments.ts'
 import type { Released } from '../domain/deploy-summary.ts'
 import type { PullRequestEvent } from '../domain/occasion.ts'
 import type { Subject } from '../domain/subject.ts'
-
-const DEPLOYABLE = 'DEPLOYABLE'
-const ARTIFACT_DIRECTORY = 'ARTIFACT'
 
 // The job that holds the credentials. It runs nothing of the project and checks out
 // nothing of it: it takes the directory it is asked to release as a request, reads that
@@ -42,10 +38,7 @@ export async function deployRelease(): Promise<void> {
 	const identity = takeRunIdentity()
 	const event = readPullRequestEvent()
 	refuseUnlessStanding(event)
-	const requested = decodeDeployEntry(
-		JSON.parse(requiredVariable(DEPLOYABLE)),
-		DEPLOYABLE,
-	)
+	const requested = requestedDeployable()
 	const root = programRoot()
 	const api = gitHub(token, event)
 	await refuseStale(
@@ -61,7 +54,7 @@ export async function deployRelease(): Promise<void> {
 			`The commit deploys ${requested.directory} as ${name}, and this job was asked for ${requested.name}`,
 		)
 	}
-	const artifact = join(workspace, requiredVariable(ARTIFACT_DIRECTORY))
+	const artifact = artifactDirectory(workspace)
 	refuseAnythingButFiles(artifact)
 	const context = {
 		repository: event.repository,

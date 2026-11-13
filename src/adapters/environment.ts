@@ -8,6 +8,12 @@ export function requiredVariable(name: string): string {
 	return found
 }
 
+// A job hands the program a matrix entry or an output as one variable holding JSON.
+export function jsonVariable(name: string): unknown {
+	const parsed: unknown = JSON.parse(requiredVariable(name))
+	return parsed
+}
+
 export function optionalVariable(name: string): string | undefined {
 	return process.env[name]
 }
