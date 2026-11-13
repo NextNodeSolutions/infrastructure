@@ -3,7 +3,6 @@ import { join } from 'node:path'
 import { packedTarball, scratchDirectory } from '../adapters/artifact-files.ts'
 import { inGroup } from '../adapters/github.ts'
 import {
-	hasVersion,
 	latestVersion,
 	packedManifest,
 	preparePublisher,
@@ -11,7 +10,6 @@ import {
 } from '../adapters/npm.ts'
 import { stream } from '../adapters/processes.ts'
 import { signProvenance } from '../adapters/provenance.ts'
-import { until } from '../adapters/wait.ts'
 import { ARTIFACT } from '../domain/artifact.ts'
 import { publish } from '../domain/deploy-commands.ts'
 import { short } from '../domain/deploy-selection.ts'
@@ -27,8 +25,9 @@ import type { Released } from '../domain/deploy-summary.ts'
 import type { PublishedAs, Subject } from '../domain/subject.ts'
 import type { ReleaseContext } from './deploy-job.ts'
 
-// The registry lists a version a moment after it accepts it.
-const PATIENCE = { everyMs: 3000, forMs: 60_000 }
+// npm lists a version only once it has processed it, a minute or more after accepting it,
+// and nothing of the release depends on the listing, so the release does not wait for it.
+const REGISTRY_FACT = 'accepted, listed once npm has processed it'
 
 // The registry trusts the workflow for every package of the repository, so the release
 // publishes a tarball only as the package and version the commit declares here.
@@ -48,16 +47,6 @@ async function refuseForeignTarball(
 	throw new Error(
 		`The commit publishes ${published.name}@${published.version}, and the build packed ${packed.name ?? 'a nameless package'}@${packed.version ?? 'no version'}`,
 	)
-}
-
-// The version is published once npm accepted it, so a registry that fails to answer
-// while the release waits has only not listed it yet.
-async function listing(
-	published: PublishedAs,
-): Promise<PublishedAs | undefined> {
-	const isListed = await hasVersion(published).catch(() => false)
-	if (!isListed) return undefined
-	return published
 }
 
 async function signed(
@@ -109,10 +98,6 @@ export async function releasePackage(
 			publisher.environment,
 		),
 	)
-	const listed = await until(() => listing(published), PATIENCE)
-	const visibility = listed
-		? 'accepted by the registry'
-		: 'accepted by the registry, not listed yet'
 	const url = `${NPM_PACKAGE_PAGE}/${published.name}/v/${published.version}`
 	return {
 		name: subject.deployable.name,
@@ -122,7 +107,7 @@ export async function releasePackage(
 			['Page', url],
 			['Tag', `\`${tag}\``],
 			['Commit', `\`${short(context.event.headSha)}\``],
-			['Registry', visibility],
+			['Registry', REGISTRY_FACT],
 			['Provenance', provenanceFact(provenance)],
 		],
 	}

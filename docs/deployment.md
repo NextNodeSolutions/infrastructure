@@ -155,9 +155,7 @@ sequenceDiagram
         S-->>R: the signature, recorded in the public transparency log
     end
     R->>N: publish the tarball with its signed provenance, its lifecycle scripts off
-    loop until the version is listed or time runs out
-        R->>N: ask for the version
-    end
+    Note over R,N: npm lists the version once it has processed it, and the release does not wait
 ```
 
 The registry stores no token for the platform and the vault holds none. Each package names its repository and the `Deploy` workflow as its trusted publisher, set once by a person through the setup command below, and the registry trades the run's identity for a token that publishes that package alone for a few minutes. A package release never logs in to the vault.
@@ -204,7 +202,6 @@ Every failed state leaves the baseline where it was. Merging a fix, or re-runnin
 | Sigstore does not sign the provenance                                | Nothing is published.                                                                                   | Re-run the failed jobs.                                                   |
 | The registry refuses the provenance                                  | Nothing is published.                                                                                   | Make the package's `repository` field name the repository.                |
 | The registry trusts no publication from the run                      | Nothing is published.                                                                                   | Run `pnpm setup-npm`, as the message says. Delete an expired trust first. |
-| The registry accepts the version and does not list it in time        | The deployment succeeded and the summary says the version is not listed yet.                            | Nothing.                                                                  |
 
 Migrations are applied before the code that needs them, so a migration must also suit the version that still serves while the upload runs, and after it if the upload fails.
 
