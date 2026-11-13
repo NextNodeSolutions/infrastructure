@@ -76,14 +76,24 @@ export async function findInPages<Found>(
 	return findInPages(api, listing, find, page + 1)
 }
 
-export async function branchCommit(
+export type BranchTip = {
+	readonly commit: string
+	readonly parent: string | undefined
+}
+
+export async function branchTip(
 	api: GitHub,
 	branch: string,
-): Promise<string> {
+): Promise<BranchTip> {
 	const reply = await api.get(`/commits/${encodeURIComponent(branch)}`)
 	if (!isSuccess(reply)) throw refusedBy(reply, `read the tip of ${branch}`)
 	const decode = decoder(message => new Error(`GitHub branch: ${message}`))
-	return decode.string(fieldsOf(reply, 'the branch tip'), 'sha')
+	const tip = fieldsOf(reply, 'the branch tip')
+	const [parent] = decode.records(tip, 'parents')
+	return {
+		commit: decode.string(tip, 'sha'),
+		parent: parent && decode.string(parent, 'sha'),
+	}
 }
 
 // A file as the commit holds it, read through the API: the job that reads it this way

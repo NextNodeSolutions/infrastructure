@@ -2,7 +2,7 @@ import { refuseAnythingButFiles } from '../adapters/artifact-files.ts'
 import { requiredVariable } from '../adapters/environment.ts'
 import { readPullRequestEvent } from '../adapters/event.ts'
 import { parseJson } from '../adapters/files.ts'
-import { branchCommit, readFileAt, takeGitHub } from '../adapters/github-api.ts'
+import { branchTip, readFileAt, takeGitHub } from '../adapters/github-api.ts'
 import {
 	createDeployment,
 	reportDeployment,
@@ -101,7 +101,7 @@ async function refuseStale(
 	{ name, commit }: Recorded,
 	branch: string,
 ): Promise<void> {
-	const current = await branchCommit(api, branch)
+	const { commit: current } = await branchTip(api, branch)
 	if (current === commit) return
 	const cause = `${name}: this run holds ${short(commit)}, but ${branch} now holds ${short(current)}. Run the latest deployment instead; this run releases nothing`
 	writeSummary(renderFailure(name, cause))

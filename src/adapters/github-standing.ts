@@ -1,15 +1,12 @@
-import { decoder } from '../domain/decode.ts'
 import { DEPLOYMENTS_BRANCH, standingPullRequest } from '../domain/occasion.ts'
 
-import { refusedBy } from './github-api.ts'
-import { fieldsOf, isSuccess, NOT_FOUND, recordsOf } from './http.ts'
+import { branchTip, refusedBy } from './github-api.ts'
+import { isSuccess, NOT_FOUND, recordsOf } from './http.ts'
 
 import type { PullRequestEvent } from '../domain/occasion.ts'
 import type { GitHub } from './github-api.ts'
 
 const UNPROCESSABLE = 422
-
-const decode = decoder(message => new Error(`GitHub: ${message}`))
 
 export async function hasStandingPullRequest(
 	api: GitHub,
@@ -34,17 +31,13 @@ async function ensureBranch(
 	if (isSuccess(existing)) return undefined
 	if (existing.status !== NOT_FOUND)
 		throw refusedBy(existing, `read ${DEPLOYMENTS_BRANCH}`)
-	const tip = await api.get(
-		`/commits/${encodeURIComponent(event.defaultBranch)}`,
-	)
-	if (!isSuccess(tip)) throw refusedBy(tip, `read ${event.defaultBranch}`)
-	const [parent] = decode.records(fieldsOf(tip, 'GitHub'), 'parents')
+	const { parent } = await branchTip(api, event.defaultBranch)
 	if (!parent) {
 		return `\`${event.defaultBranch}\` has a single commit, so nothing can stand behind it yet. The next pull request opens the standing one.`
 	}
 	const created = await api.post('/git/refs', {
 		ref: `refs/heads/${DEPLOYMENTS_BRANCH}`,
-		sha: decode.string(parent, 'sha'),
+		sha: parent,
 	})
 	if (!isSuccess(created))
 		throw refusedBy(created, `create ${DEPLOYMENTS_BRANCH}`)
