@@ -1,12 +1,11 @@
 import { NEXTNODE_FILE } from './declaration.ts'
 import { decoder } from './decode.ts'
+import { fileIn, ROOT_DIRECTORY } from './directory.ts'
 import { isExecutor } from './executor.ts'
 import { Refusal } from './refusal.ts'
 
 import type { Declaration } from './declaration.ts'
 import type { Executor } from './executor.ts'
-
-export const ROOT_DIRECTORY = '.'
 
 // One nextnode.toml, named once: the name is the Worker, the GitHub environment that
 // records its deployments, the Pulumi stack and the artifact that carries its build.
@@ -33,9 +32,7 @@ const SCOPE = /^@[^/]+\//
 const DIRECTORY = /^(?:\.|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)$/
 
 export function declarationFile(directory: string): string {
-	return directory === ROOT_DIRECTORY
-		? NEXTNODE_FILE
-		: `${directory}/${NEXTNODE_FILE}`
+	return fileIn(directory, NEXTNODE_FILE)
 }
 
 export function deployableFor(

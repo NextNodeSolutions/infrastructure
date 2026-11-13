@@ -1,4 +1,5 @@
 import { decoder } from './decode.ts'
+import { fileIn } from './directory.ts'
 import { Refusal } from './refusal.ts'
 
 import type { Decoder } from './decode.ts'
@@ -12,6 +13,10 @@ export type Manifest = {
 }
 
 export const MANIFEST_FILE = 'package.json'
+
+export function manifestFile(directory: string): string {
+	return fileIn(directory, MANIFEST_FILE)
+}
 
 export function decodeManifest(parsed: unknown, file: string): Manifest {
 	const decode = decoder(message => new Refusal(file, `${file}: ${message}`))

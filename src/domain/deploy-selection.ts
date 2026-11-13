@@ -1,4 +1,4 @@
-import { ROOT_DIRECTORY } from './deployable.ts'
+import { ROOT_DIRECTORY } from './directory.ts'
 
 import type { Deployable } from './deployable.ts'
 

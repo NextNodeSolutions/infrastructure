@@ -8,8 +8,13 @@ import { decodeListing, throughNpm } from '../adapters/pnpm.ts'
 import { capture } from '../adapters/processes.ts'
 import { programRevision } from '../adapters/program-directory.ts'
 import { listPackages } from '../domain/commands.ts'
+import { ROOT_DIRECTORY } from '../domain/directory.ts'
 import { executorFor, TURBO_FILE, WORKSPACE_FILE } from '../domain/executor.ts'
-import { decodeManifest, MANIFEST_FILE } from '../domain/manifest.ts'
+import {
+	decodeManifest,
+	MANIFEST_FILE,
+	manifestFile,
+} from '../domain/manifest.ts'
 import { NOTHING_TO_CHECK, outputsFor } from '../domain/outputs.ts'
 import { planFor } from '../domain/plan.ts'
 import {
@@ -50,7 +55,7 @@ export async function discover(): Promise<void> {
 			? [
 					{
 						name: manifest.name ?? '',
-						directory: '.',
+						directory: ROOT_DIRECTORY,
 						scripts: manifest.scripts,
 					},
 				]
@@ -97,7 +102,6 @@ async function workspacePackages(
 	return members.map(member => ({
 		name: member.name,
 		directory: member.directory,
-		scripts: readManifest(project, join(member.directory, MANIFEST_FILE))
-			.scripts,
+		scripts: readManifest(project, manifestFile(member.directory)).scripts,
 	}))
 }

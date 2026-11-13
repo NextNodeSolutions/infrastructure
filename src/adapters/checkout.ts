@@ -3,12 +3,17 @@ import { join, relative } from 'node:path'
 
 import { listPackages } from '../domain/commands.ts'
 import { NEXTNODE_FILE } from '../domain/declaration.ts'
-import { declarationFile, ROOT_DIRECTORY } from '../domain/deployable.ts'
+import { declarationFile } from '../domain/deployable.ts'
+import { ROOT_DIRECTORY } from '../domain/directory.ts'
 import { executorFor, TURBO_FILE, WORKSPACE_FILE } from '../domain/executor.ts'
-import { decodeManifest, MANIFEST_FILE } from '../domain/manifest.ts'
+import {
+	decodeManifest,
+	MANIFEST_FILE,
+	manifestFile,
+} from '../domain/manifest.ts'
 import { Refusal } from '../domain/refusal.ts'
 import { WITHOUT_BASE } from '../domain/selection.ts'
-import { manifestFile, subjectOf } from '../domain/subject.ts'
+import { subjectOf } from '../domain/subject.ts'
 import { readToolchain } from '../domain/toolchain.ts'
 
 import { hasFile, readJsonFile } from './files.ts'

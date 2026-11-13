@@ -1,5 +1,5 @@
-import { declarationFile, deployableFor, ROOT_DIRECTORY } from './deployable.ts'
-import { decodeManifest, MANIFEST_FILE } from './manifest.ts'
+import { declarationFile, deployableFor } from './deployable.ts'
+import { decodeManifest, manifestFile } from './manifest.ts'
 import { decodeNextnodeToml } from './nextnode-toml.ts'
 import { Refusal } from './refusal.ts'
 
@@ -21,12 +21,6 @@ export type Sources = {
 export type PublishedAs = {
 	readonly name: string
 	readonly version: string
-}
-
-export function manifestFile(directory: string): string {
-	return directory === ROOT_DIRECTORY
-		? MANIFEST_FILE
-		: `${directory}/${MANIFEST_FILE}`
 }
 
 // One nextnode.toml and the package.json beside it, decoded the same way whether a job
