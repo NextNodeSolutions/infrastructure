@@ -10,13 +10,17 @@ export function hasFile(path: string): boolean {
 	return existsSync(path)
 }
 
-export function readJsonFile(path: string, file: string): unknown {
+export function parseJson(text: string, file: string): unknown {
 	try {
-		const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'))
+		const parsed: unknown = JSON.parse(text)
 		return parsed
 	} catch (failure: unknown) {
 		throw new Refusal(file, `${file} is not valid JSON`, { cause: failure })
 	}
+}
+
+export function readJsonFile(path: string, file: string): unknown {
+	return parseJson(readFileSync(path, 'utf8'), file)
 }
 
 export function readManifest(

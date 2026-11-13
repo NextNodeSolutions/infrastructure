@@ -1,6 +1,7 @@
 import { refuseAnythingButFiles } from '../adapters/artifact-files.ts'
 import { requiredVariable } from '../adapters/environment.ts'
 import { readPullRequestEvent } from '../adapters/event.ts'
+import { parseJson } from '../adapters/files.ts'
 import { branchCommit, readFileAt, takeGitHub } from '../adapters/github-api.ts'
 import {
 	createDeployment,
@@ -77,14 +78,14 @@ async function committedSubject(
 	directory: string,
 ): Promise<Subject> {
 	const file = declarationFile(directory)
-	const [toml, manifest] = await Promise.all([
+	const manifest = manifestFile(directory)
+	const [tomlText, manifestText] = await Promise.all([
 		readFileAt(api, file, event.headSha),
-		readFileAt(api, manifestFile(directory), event.headSha),
+		readFileAt(api, manifest, event.headSha),
 	])
-	const parsedManifest: unknown = JSON.parse(manifest)
 	return subjectOf(event.repository, directory, {
-		toml: await parseToml(toml, file),
-		manifest: parsedManifest,
+		toml: await parseToml(tomlText, file),
+		manifest: parseJson(manifestText, manifest),
 	})
 }
 
