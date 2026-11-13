@@ -1,6 +1,6 @@
 import { declaredChecks, hasBuildScript } from './checks.ts'
 import { decoder } from './decode.ts'
-import { isExecutor } from './executor.ts'
+import { EXECUTORS } from './executor.ts'
 
 import type { Executor } from './executor.ts'
 
@@ -58,7 +58,7 @@ export function decodeCheckEntry(parsed: unknown, source: string): CheckEntry {
 		name: decode.string(fields, 'name'),
 		package: decode.string(fields, 'package'),
 		script: decode.string(fields, 'script'),
-		executor: decodeExecutor(decode.string(fields, 'executor'), source),
+		executor: decode.oneOf(fields, 'executor', EXECUTORS),
 	}
 }
 
@@ -73,14 +73,7 @@ export function decodeBuildPlan(parsed: unknown, source: string): BuildPlan {
 		throw new Error(`${source}: packages must be a list of names`)
 	}
 	return {
-		executor: decodeExecutor(decode.string(fields, 'executor'), source),
+		executor: decode.oneOf(fields, 'executor', EXECUTORS),
 		packages: listed,
 	}
-}
-
-function decodeExecutor(candidate: string, source: string): Executor {
-	if (!isExecutor(candidate)) {
-		throw new Error(`${source}: ${candidate} is not an executor`)
-	}
-	return candidate
 }

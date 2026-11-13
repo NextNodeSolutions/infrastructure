@@ -3,19 +3,11 @@ import { decoder } from './decode.ts'
 import { decodeWorker, WORKER_KEYS } from './nextnode-worker.ts'
 import { Refusal } from './refusal.ts'
 
-import type {
-	Declaration,
-	PackageAccess,
-	PackageDeclaration,
-} from './declaration.ts'
+import type { Declaration, PackageDeclaration } from './declaration.ts'
 import type { Fields } from './decode.ts'
 import type { Decoding } from './nextnode-worker.ts'
 
 const PACKAGE_KEY = 'package'
-
-function isPackageAccess(candidate: string): candidate is PackageAccess {
-	return PACKAGE_ACCESSES.some(access => access === candidate)
-}
 
 export function decodeNextnodeToml(parsed: unknown, file: string): Declaration {
 	const refuse = (message: string): Refusal =>
@@ -40,11 +32,13 @@ function decodePackage(
 		)
 	}
 	decode.onlyKeys(packageFields, ['access'], PACKAGE_KEY)
-	const access = decode.string(packageFields, 'access')
-	if (!isPackageAccess(access)) {
-		throw refuse(
-			`package.access must be one of ${PACKAGE_ACCESSES.join(', ')}`,
-		)
+	return {
+		kind: 'package',
+		access: decode.oneOf(
+			packageFields,
+			'access',
+			PACKAGE_ACCESSES,
+			`${PACKAGE_KEY}.access`,
+		),
 	}
-	return { kind: 'package', access }
 }

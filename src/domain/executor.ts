@@ -14,7 +14,3 @@ export function executorFor(shape: RepositoryShape): Executor {
 	if (!shape.hasWorkspaceFile) return 'single'
 	return shape.hasTurboFile ? 'turbo' : 'pnpm'
 }
-
-export function isExecutor(candidate: string): candidate is Executor {
-	return EXECUTORS.some(executor => executor === candidate)
-}

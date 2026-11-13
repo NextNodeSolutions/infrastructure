@@ -1,7 +1,7 @@
 import { NEXTNODE_FILE } from './declaration.ts'
 import { decoder } from './decode.ts'
 import { fileIn, ROOT_DIRECTORY } from './directory.ts'
-import { isExecutor } from './executor.ts'
+import { EXECUTORS } from './executor.ts'
 import { Refusal } from './refusal.ts'
 
 import type { Declaration } from './declaration.ts'
@@ -62,10 +62,6 @@ export function deployableFor(
 	return { name, kind, directory, package: placement.package }
 }
 
-function isKind(candidate: string): candidate is Declaration['kind'] {
-	return KINDS.some(kind => kind === candidate)
-}
-
 export function decodeDeployEntry(
 	parsed: unknown,
 	source: string,
@@ -74,11 +70,9 @@ export function decodeDeployEntry(
 		new Error(`${source}: ${message}`)
 	const decode = decoder(invalid)
 	const fields = decode.record(parsed, source)
-	const kind = decode.string(fields, 'kind')
-	const executor = decode.string(fields, 'executor')
+	const kind = decode.oneOf(fields, 'kind', KINDS)
+	const executor = decode.oneOf(fields, 'executor', EXECUTORS)
 	const directory = decode.string(fields, 'directory')
-	if (!isKind(kind)) throw invalid(`${kind} is not a kind of deployable`)
-	if (!isExecutor(executor)) throw invalid(`${executor} is not an executor`)
 	if (!DIRECTORY.test(directory) || directory.split('/').includes('..'))
 		throw invalid('directory must be a path inside the repository')
 	return {
