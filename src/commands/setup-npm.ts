@@ -83,6 +83,9 @@ async function setUp(
 	if (isStaged) await createPackage(published, repository)
 	if (await isTrusted(published.name, repository))
 		return { kind: 'trusted already', published }
+	// Asked again after npm's approval, which can take minutes, so a version published meanwhile gets no trust to let expire.
+	if (await hasVersion(published))
+		return { kind: 'nothing to publish', published }
 	await trustDeployWorkflow(published.name, repository)
 	if (!(await isTrusted(published.name, repository))) {
 		throw new Error(
