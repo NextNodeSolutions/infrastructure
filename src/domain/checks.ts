@@ -5,6 +5,7 @@ export type Check = {
 
 const KNOWN_CHECKS: readonly Check[] = [
 	{ script: 'lint', label: 'Lint' },
+	{ script: 'format:check', label: 'Format' },
 	{ script: 'type-check', label: 'TypeScript' },
 	{ script: 'test:unit', label: 'Unit tests' },
 	{ script: 'test:integration', label: 'Integration tests' },
