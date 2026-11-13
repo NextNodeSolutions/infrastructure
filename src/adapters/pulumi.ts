@@ -1,6 +1,9 @@
 import { mkdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 import { decoder } from '../domain/decode.ts'
+
+import { installPulumi } from './pulumi-cli.ts'
 
 import type * as CloudflareProvider from '@pulumi/cloudflare'
 import type { PlatformCredentials } from '../domain/platform.ts'
@@ -80,11 +83,16 @@ function environmentOf({
 }
 
 // The databases and buckets a Worker binds, created when missing and never deleted.
-// The SDK is loaded when called, like every dependency of the program.
+// The SDK is loaded when called, like every dependency of the program. It hands the CLI
+// the job's environment, which holds no token by then, and the variables named here.
 export async function converge(convergence: Convergence): Promise<Provisioned> {
 	const automation = await import('@pulumi/pulumi/automation/index.js')
 	const cloudflare = await import('@pulumi/cloudflare')
-	mkdirSync(convergence.workDirectory, { recursive: true })
+	const project = join(convergence.workDirectory, 'project')
+	mkdirSync(project, { recursive: true })
+	const pulumiCommand = await automation.PulumiCommand.get({
+		root: await installPulumi(join(convergence.workDirectory, 'cli')),
+	})
 	const stack = await automation.LocalWorkspace.createOrSelectStack(
 		{
 			stackName: convergence.stack,
@@ -96,7 +104,8 @@ export async function converge(convergence: Convergence): Promise<Provisioned> {
 			),
 		},
 		{
-			workDir: convergence.workDirectory,
+			workDir: project,
+			pulumiCommand,
 			secretsProvider: 'passphrase',
 			projectSettings: {
 				name: convergence.project,
