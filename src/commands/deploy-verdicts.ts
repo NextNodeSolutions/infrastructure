@@ -20,7 +20,7 @@ import type { Subject } from '../domain/subject.ts'
 export type Evidence = {
 	readonly api: GitHub
 	readonly checkout: Checkout
-	readonly headSha: string
+	readonly checkedOut: string
 }
 
 type Changes = (deployed: string) => Promise<Changed>
@@ -54,7 +54,7 @@ async function sinceOf(
 ): Promise<Since> {
 	const relation = await relationToHead(
 		deployed,
-		evidence.headSha,
+		evidence.checkedOut,
 		evidence.checkout.project,
 	)
 	if (relation !== 'older') return { relation }

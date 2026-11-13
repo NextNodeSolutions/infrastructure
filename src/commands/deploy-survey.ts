@@ -6,6 +6,7 @@ import {
 	readSubject,
 } from '../adapters/checkout.ts'
 import { hasFile } from '../adapters/files.ts'
+import { revisionAt } from '../adapters/git.ts'
 import { installDependencies } from '../adapters/program-install.ts'
 import { programRoot } from '../adapters/relocation.ts'
 import { NEXTNODE_FILE } from '../domain/declaration.ts'
@@ -35,8 +36,9 @@ function hasManifest(project: string): boolean {
 }
 
 // What the checked-out commit declares and what each deployable does at it, or nothing
-// when the repository declares none. It reads the project's files and runs its package
-// manager, so the job that calls it holds a token that only reads.
+// when the repository declares none. Plan checks out the merge GitHub builds for the pull
+// request, Discover the commit it deploys. It reads the project's files and runs its
+// package manager, so the job that calls it holds a token that only reads.
 export async function survey(
 	project: string,
 	event: PullRequestEvent,
@@ -56,7 +58,7 @@ export async function survey(
 	const rows = await planRows(subjects, {
 		api,
 		checkout,
-		headSha: event.headSha,
+		checkedOut: await revisionAt(project),
 	})
 	return { checkout, rows }
 }
