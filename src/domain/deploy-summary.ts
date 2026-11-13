@@ -3,7 +3,6 @@ import { short } from './deploy-selection.ts'
 import type { Standing } from './deploy-outputs.ts'
 import type { Verdict } from './deploy-selection.ts'
 import type { Deployable } from './deployable.ts'
-import type { Occasion } from './occasion.ts'
 
 export type PlanRow = {
 	readonly deployable: Deployable
@@ -11,25 +10,16 @@ export type PlanRow = {
 }
 
 export type Plan = {
-	readonly occasion: Occasion
 	readonly commit: string
 	readonly rows: readonly PlanRow[]
-	readonly standing: Standing
 	readonly programRevision: string
 }
 
 export const NOTHING_DECLARED =
 	'Nothing to deploy: the repository holds no nextnode.toml.\n'
 
-export const NOT_A_DEPLOYMENT =
-	'Nothing to deploy: this pull request does not target the default branch.\n'
-
-const HEADINGS: Record<Occasion, (commit: string) => string> = {
-	proposal: commit =>
-		`Plan for \`${short(commit)}\`: what a merge of this pull request deploys.`,
-	release: commit => `Deploying \`${short(commit)}\`.`,
-	elsewhere: () => NOT_A_DEPLOYMENT,
-}
+export const NOT_A_PROPOSAL =
+	'Nothing to plan: only a pull request into the default branch proposes a deployment.\n'
 
 // The pull request that deployments run on, said on every proposal: when it is missing,
 // merges deploy nothing until it is open again.
@@ -42,22 +32,34 @@ const STANDING_NOTES: Record<Standing, readonly string[]> = {
 	'not looked for': [],
 }
 
-export function renderPlan(plan: Plan): string {
+function render(heading: string, plan: Plan, notes: readonly string[]): string {
 	const rows = plan.rows.map(
 		({ deployable, verdict }) =>
 			`| \`${deployable.name}\` | ${deployable.kind} | \`${deployable.directory}\` | ${verdict.deploys ? 'yes' : 'no'} | ${verdict.reason} |`,
 	)
 	return [
-		HEADINGS[plan.occasion](plan.commit),
+		heading,
 		'',
 		'| Deployable | Kind | Directory | Deploys | Why |',
 		'| --- | --- | --- | --- | --- |',
 		...rows,
 		'',
-		...STANDING_NOTES[plan.standing],
+		...notes,
 		`Deploy program at \`${plan.programRevision}\`.`,
 		'',
 	].join('\n')
+}
+
+export function renderProposal(plan: Plan, standing: Standing): string {
+	return render(
+		`Plan for \`${short(plan.commit)}\`: what a merge of this pull request deploys.`,
+		plan,
+		STANDING_NOTES[standing],
+	)
+}
+
+export function renderRelease(plan: Plan): string {
+	return render(`Deploying \`${short(plan.commit)}\`.`, plan, [])
 }
 
 export type Fact = readonly [label: string, value: string]

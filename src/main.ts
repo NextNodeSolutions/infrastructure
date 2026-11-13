@@ -4,6 +4,7 @@ import { check } from './commands/check.ts'
 import { deployAnchor } from './commands/deploy-anchor.ts'
 import { deployBuild } from './commands/deploy-build.ts'
 import { deployDiscover } from './commands/deploy-discover.ts'
+import { deployPlan } from './commands/deploy-plan.ts'
 import { deployRelease } from './commands/deploy-release.ts'
 import { discover } from './commands/discover.ts'
 import { Refusal } from './domain/refusal.ts'
@@ -12,8 +13,9 @@ const COMMANDS: Record<string, () => Promise<void>> = {
 	discover,
 	check,
 	build,
-	'deploy-discover': deployDiscover,
+	'deploy-plan': deployPlan,
 	'deploy-anchor': deployAnchor,
+	'deploy-discover': deployDiscover,
 	'deploy-build': deployBuild,
 	'deploy-release': deployRelease,
 }

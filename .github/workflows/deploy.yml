@@ -3,9 +3,11 @@
 # Every decision is made by the program under src/, which each job fetches at this
 # file's own commit and runs with one line.
 #
+# It runs on the standing pull request, from the default branch into the branch that
+# never moves, and on nothing else: the program refuses any other pull request first.
 # The jobs are split by what they hold. Discover and Build read and run the project and
-# hold a token that only reads. Anchor and Release hold what can write and what can
-# deploy, and neither checks out, installs or runs anything of the project.
+# hold a token that only reads. Release holds what can deploy, and neither checks out,
+# installs nor runs anything of the project.
 name: Deploy
 
 on:
@@ -30,11 +32,9 @@ jobs:
         permissions:
             contents: read
             deployments: read
-            pull-requests: read
         outputs:
             node: ${{ steps.discover.outputs.node }}
             builds: ${{ steps.discover.outputs.builds }}
-            anchor: ${{ steps.discover.outputs.anchor }}
         steps:
             - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
               with:
@@ -55,29 +55,6 @@ jobs:
               env:
                   GITHUB_TOKEN: ${{ github.token }}
               run: node "$PROGRAM/src/cli.ts" deploy-discover
-
-    anchor:
-        name: Open the standing pull request
-        needs: discover
-        if: needs.discover.outputs.anchor == 'true'
-        runs-on: ubuntu-24.04
-        timeout-minutes: 5
-        permissions:
-            contents: write
-            pull-requests: write
-        steps:
-            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-              with:
-                  repository: ${{ job.workflow_repository }}
-                  ref: ${{ job.workflow_sha }}
-                  path: ${{ env.PROGRAM }}
-                  persist-credentials: false
-            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-              with:
-                  node-version-file: ${{ env.PROGRAM }}/.node-version
-            - env:
-                  GITHUB_TOKEN: ${{ github.token }}
-              run: node "$PROGRAM/src/cli.ts" deploy-anchor
 
     build:
         name: Build ${{ matrix.name }}

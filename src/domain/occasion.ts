@@ -31,6 +31,15 @@ export function occasionOf(event: PullRequestEvent): Occasion {
 	)
 }
 
+// The Deploy workflow releases the standing pull request and refuses every other, before
+// anything of the project is read and before any credential is asked for.
+export function refuseUnlessStanding(event: PullRequestEvent): void {
+	if (occasionOf(event) === 'release') return
+	throw new Error(
+		`Only the standing pull request deploys: this one targets ${event.baseRef} and deploys nothing`,
+	)
+}
+
 // Whether this run can open the standing pull request. GitHub hands a token that only
 // reads to a run that a fork or Dependabot started, whatever the workflow asks for.
 export function opensStanding(event: PullRequestEvent): boolean {

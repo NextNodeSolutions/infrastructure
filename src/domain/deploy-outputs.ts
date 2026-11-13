@@ -6,26 +6,26 @@ import type { Toolchain } from './toolchain.ts'
 // run whose token could not open it.
 export type Standing = 'open' | 'missing' | 'not looked for'
 
+export type PlanOutputs = { readonly anchor: string }
+
 export type DeployOutputs = {
 	readonly node: string
 	readonly builds: string
-	readonly anchor: string
 }
 
 export type Deploying = {
 	readonly toolchain: Toolchain
 	readonly executor: Executor
 	readonly deployables: readonly Deployable[]
-	readonly standing: Standing
 }
 
-export const NOTHING_TO_DEPLOY: DeployOutputs = {
-	node: '',
-	builds: '[]',
-	anchor: '',
-}
+export const NOTHING_TO_DEPLOY: DeployOutputs = { node: '', builds: '[]' }
 
 const ANCHOR_NEEDED = 'true'
+
+export function planOutputs(standing: Standing): PlanOutputs {
+	return { anchor: standing === 'missing' ? ANCHOR_NEEDED : '' }
+}
 
 function entryFor(deployable: Deployable, executor: Executor): DeployEntry {
 	return { ...deployable, executor }
@@ -38,6 +38,5 @@ export function deployOutputs(deploying: Deploying): DeployOutputs {
 	return {
 		node: String(deploying.toolchain.nodeMajor),
 		builds: JSON.stringify(entries),
-		anchor: deploying.standing === 'missing' ? ANCHOR_NEEDED : '',
 	}
 }

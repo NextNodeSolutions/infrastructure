@@ -15,7 +15,7 @@ import { parseToml } from '../adapters/toml.ts'
 import { short } from '../domain/deploy-selection.ts'
 import { renderFailure, renderReleased } from '../domain/deploy-summary.ts'
 import { declarationFile, decodeDeployEntry } from '../domain/deployable.ts'
-import { occasionOf } from '../domain/occasion.ts'
+import { refuseUnlessStanding } from '../domain/occasion.ts'
 import { manifestFile, subjectOf } from '../domain/subject.ts'
 
 import { releasePackage } from './release-package.ts'
@@ -42,11 +42,7 @@ export async function deployRelease(): Promise<void> {
 		token: takeVariable('ACTIONS_ID_TOKEN_REQUEST_TOKEN'),
 	}
 	const event = readPullRequestEvent()
-	if (occasionOf(event) !== 'release') {
-		throw new Error(
-			`Only the standing pull request releases: this one targets ${event.baseRef} and releases nothing`,
-		)
-	}
+	refuseUnlessStanding(event)
 	const requested = decodeDeployEntry(
 		JSON.parse(requiredVariable(DEPLOYABLE)),
 		DEPLOYABLE,
