@@ -2,6 +2,10 @@ import { readPullRequestEvent } from '../adapters/event.ts'
 import { takeGitHub } from '../adapters/github-api.ts'
 import { ensureStandingPullRequest } from '../adapters/github-standing.ts'
 import { writeSummary } from '../adapters/github.ts'
+import {
+	NOT_OPENED_BY_A_PERSON,
+	renderStandingOutcome,
+} from '../domain/deploy-summary.ts'
 import { opensStanding } from '../domain/occasion.ts'
 
 // The one job whose token writes to the repository, on a pull request nobody reviewed
@@ -11,10 +15,9 @@ export async function deployAnchor(): Promise<void> {
 	const event = readPullRequestEvent()
 	const api = takeGitHub(event)
 	if (!opensStanding(event)) {
-		writeSummary(
-			'Only a pull request that a person opened in this repository, into its default branch, opens the standing pull request.\n',
-		)
+		writeSummary(NOT_OPENED_BY_A_PERSON)
 		return
 	}
-	writeSummary(`${await ensureStandingPullRequest(api, event)}\n`)
+	const outcome = await ensureStandingPullRequest(api, event)
+	writeSummary(renderStandingOutcome(outcome, event.defaultBranch))
 }

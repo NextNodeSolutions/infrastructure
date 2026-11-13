@@ -3,7 +3,7 @@ import { DEPLOYMENTS_BRANCH, standingPullRequest } from '../domain/occasion.ts'
 import { branchTip, refusedBy } from './github-api.ts'
 import { isSuccess, NOT_FOUND, recordsOf } from './http.ts'
 
-import type { PullRequestEvent } from '../domain/occasion.ts'
+import type { PullRequestEvent, StandingOutcome } from '../domain/occasion.ts'
 import type { GitHub } from './github-api.ts'
 
 const UNPROCESSABLE = 422
@@ -22,26 +22,25 @@ export async function hasStandingPullRequest(
 }
 
 // The branch starts one commit behind the default branch: a pull request needs a commit
-// between its two ends, and the branch then never moves.
+// between its two ends, and the branch then never moves. A default branch with a single
+// commit has nothing to stand behind, so the answer is then no.
 async function ensureBranch(
 	api: GitHub,
 	event: PullRequestEvent,
-): Promise<string | undefined> {
+): Promise<boolean> {
 	const existing = await api.get(`/git/ref/heads/${DEPLOYMENTS_BRANCH}`)
-	if (isSuccess(existing)) return undefined
+	if (isSuccess(existing)) return true
 	if (existing.status !== NOT_FOUND)
 		throw refusedBy(existing, `read ${DEPLOYMENTS_BRANCH}`)
 	const { parent } = await branchTip(api, event.defaultBranch)
-	if (!parent) {
-		return `\`${event.defaultBranch}\` has a single commit, so nothing can stand behind it yet. The next pull request opens the standing one.`
-	}
+	if (!parent) return false
 	const created = await api.post('/git/refs', {
 		ref: `refs/heads/${DEPLOYMENTS_BRANCH}`,
 		sha: parent,
 	})
 	if (!isSuccess(created))
 		throw refusedBy(created, `create ${DEPLOYMENTS_BRANCH}`)
-	return undefined
+	return true
 }
 
 // Opens the pull request that deployments run on, and its branch, when either is missing.
@@ -49,17 +48,13 @@ async function ensureBranch(
 export async function ensureStandingPullRequest(
 	api: GitHub,
 	event: PullRequestEvent,
-): Promise<string> {
-	if (await hasStandingPullRequest(api, event))
-		return 'The standing pull request is open: nothing to do.'
-	const waiting = await ensureBranch(api, event)
-	if (waiting) return waiting
+): Promise<StandingOutcome> {
+	if (await hasStandingPullRequest(api, event)) return 'open'
+	if (!(await ensureBranch(api, event))) return 'single commit'
 	const { base, head, title, body } = standingPullRequest(event)
 	const opened = await api.post('/pulls', { base, head, title, body })
-	if (opened.status === UNPROCESSABLE) {
-		return `\`${head}\` holds no commit that \`${base}\` lacks, so GitHub opens no pull request between them yet. The next pull request opens it.`
-	}
+	if (opened.status === UNPROCESSABLE) return 'nothing between'
 	if (!isSuccess(opened))
 		throw refusedBy(opened, 'open the standing pull request')
-	return `Opened the standing pull request from \`${head}\` into \`${base}\`. Merges into \`${head}\` deploy from now on.`
+	return 'opened'
 }

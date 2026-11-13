@@ -57,6 +57,12 @@ export function opensStanding(event: PullRequestEvent): boolean {
 	)
 }
 
+export type StandingOutcome =
+	| 'open'
+	| 'single commit'
+	| 'nothing between'
+	| 'opened'
+
 export function standingPullRequest(event: PullRequestEvent): {
 	readonly base: string
 	readonly head: string

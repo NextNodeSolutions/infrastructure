@@ -1,10 +1,12 @@
 import { short } from './deploy-selection.ts'
 import { markdownTable } from './markdown-table.ts'
+import { DEPLOYMENTS_BRANCH } from './occasion.ts'
 
 import type { WorkerDeclaration } from './declaration.ts'
 import type { Standing } from './deploy-outputs.ts'
 import type { Verdict } from './deploy-selection.ts'
 import type { Deployable } from './deployable.ts'
+import type { StandingOutcome } from './occasion.ts'
 
 export type PlanRow = {
 	readonly deployable: Deployable
@@ -30,6 +32,24 @@ export const NOT_A_PROPOSAL =
 // first proposal that finds it missing says so where a reviewer looks.
 export const STANDING_MISSING =
 	'The standing pull request is missing, so a merge deploys nothing: this run opens it again. Merges that landed without it are deployed by the next one.'
+
+export const NOT_OPENED_BY_A_PERSON =
+	'Only a pull request that a person opened in this repository, into its default branch, opens the standing pull request.\n'
+
+export function renderStandingOutcome(
+	outcome: StandingOutcome,
+	defaultBranch: string,
+): string {
+	const head = `\`${defaultBranch}\``
+	const base = `\`${DEPLOYMENTS_BRANCH}\``
+	const notes: Record<StandingOutcome, string> = {
+		open: 'The standing pull request is open: nothing to do.',
+		'single commit': `${head} has a single commit, so nothing can stand behind it yet. The next pull request opens the standing one.`,
+		'nothing between': `${head} holds no commit that ${base} lacks, so GitHub opens no pull request between them yet. The next pull request opens it.`,
+		opened: `Opened the standing pull request from ${head} into ${base}. Merges into ${head} deploy from now on.`,
+	}
+	return `${notes[outcome]}\n`
+}
 
 const STANDING_NOTES: Record<Standing, readonly string[]> = {
 	open: ['The standing pull request is open: a merge deploys.', ''],
