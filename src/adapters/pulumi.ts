@@ -70,7 +70,9 @@ function environmentOf({
 	credentials,
 }: Convergence): Record<string, string> {
 	return {
-		...backend.environment,
+		AWS_ACCESS_KEY_ID: backend.keys.accessKeyId,
+		AWS_SECRET_ACCESS_KEY: backend.keys.secretAccessKey,
+		AWS_REGION: backend.keys.region,
 		PULUMI_CONFIG_PASSPHRASE: credentials.statePassphrase,
 		CLOUDFLARE_API_TOKEN: credentials.cloudflareToken,
 		PULUMI_SKIP_UPDATE_CHECK: 'true',

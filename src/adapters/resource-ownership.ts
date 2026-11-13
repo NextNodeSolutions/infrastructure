@@ -21,15 +21,7 @@ async function request(
 	record?: Fields,
 ): Promise<Reply> {
 	const { AwsClient } = await import('aws4fetch')
-	const signer = new AwsClient({
-		accessKeyId: decode.string(backend.environment, 'AWS_ACCESS_KEY_ID'),
-		secretAccessKey: decode.string(
-			backend.environment,
-			'AWS_SECRET_ACCESS_KEY',
-		),
-		service: 's3',
-		region: 'auto',
-	})
+	const signer = new AwsClient({ ...backend.keys, service: 's3' })
 	const encoded = key.split('/').map(encodeURIComponent).join('/')
 	const url = new URL(`ownership/${encoded}`, backend.objectEndpoint)
 	const headers = new Headers({ 'content-type': 'application/json' })

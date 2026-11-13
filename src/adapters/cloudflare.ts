@@ -25,11 +25,19 @@ export type Account = {
 	readonly token: string
 }
 
+type StateKeys = {
+	readonly accessKeyId: string
+	readonly secretAccessKey: string
+	readonly region: string
+}
+
 export type StateBackend = {
 	readonly objectEndpoint: string
 	readonly url: string
-	readonly environment: Readonly<Record<string, string>>
+	readonly keys: StateKeys
 }
+
+const STATE_REGION = 'auto'
 
 const decode = decoder(message => new Error(`Cloudflare: ${message}`))
 
@@ -193,11 +201,11 @@ export async function stateBackend(account: Account): Promise<StateBackend> {
 	const endpoint = `${account.id}.r2.cloudflarestorage.com`
 	return {
 		objectEndpoint: `https://${endpoint}/${STATE_BUCKET}/`,
-		url: `s3://${STATE_BUCKET}?endpoint=${endpoint}&region=auto&s3ForcePathStyle=true`,
-		environment: {
-			AWS_ACCESS_KEY_ID: decode.string(token, 'id'),
-			AWS_SECRET_ACCESS_KEY: secretKey,
-			AWS_REGION: 'auto',
+		url: `s3://${STATE_BUCKET}?endpoint=${endpoint}&region=${STATE_REGION}&s3ForcePathStyle=true`,
+		keys: {
+			accessKeyId: decode.string(token, 'id'),
+			secretAccessKey: secretKey,
+			region: STATE_REGION,
 		},
 	}
 }
