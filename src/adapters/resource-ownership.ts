@@ -3,16 +3,12 @@ import { decoder } from '../domain/decode.ts'
 import { fieldsOf, isSuccess, send } from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
+import type { Ownership } from '../domain/ownership.ts'
 import type { StateBackend } from './cloudflare.ts'
 import type { Reply } from './http.ts'
 
 const PRECONDITION_FAILED = 412
 const decode = decoder(message => new Error(`Resource ownership: ${message}`))
-
-type Ownership = {
-	readonly owner: string
-	readonly keys: readonly string[]
-}
 
 async function request(
 	backend: StateBackend,
