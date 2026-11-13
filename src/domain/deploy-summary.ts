@@ -1,5 +1,6 @@
 import { short } from './deploy-selection.ts'
 
+import type { WorkerDeclaration } from './declaration.ts'
 import type { Standing } from './deploy-outputs.ts'
 import type { Verdict } from './deploy-selection.ts'
 import type { Deployable } from './deployable.ts'
@@ -73,13 +74,59 @@ export type Released = {
 	readonly facts: readonly Fact[]
 }
 
-export function renderReleased(released: Released): string {
+function renderFacts(heading: string, facts: readonly Fact[]): string {
 	return [
-		`### Deployed \`${released.name}\``,
+		heading,
 		'',
 		'| | |',
 		'| --- | --- |',
-		...released.facts.map(([label, value]) => `| ${label} | ${value} |`),
+		...facts.map(([label, value]) => `| ${label} | ${value} |`),
+		'',
+	].join('\n')
+}
+
+export function renderReleased(released: Released): string {
+	return renderFacts(`### Deployed \`${released.name}\``, released.facts)
+}
+
+// What a Worker's build leaves for its release, read from the declaration it staged.
+export function stagedWorker(declaration: WorkerDeclaration): readonly Fact[] {
+	const { main, assets, databases } = declaration
+	const code: readonly Fact[] = main
+		? [['Code', `\`${main}\` bundled by Wrangler`]]
+		: []
+	const files: readonly Fact[] = assets
+		? [['Assets', `\`${assets.directory}\``]]
+		: []
+	const migrations = databases.flatMap(
+		({ binding, migrationsDirectory }): readonly Fact[] =>
+			migrationsDirectory
+				? [
+						[
+							`Migrations of \`${binding}\``,
+							`\`${migrationsDirectory}\``,
+						],
+					]
+				: [],
+	)
+	return [...code, ...files, ...migrations]
+}
+
+export function renderBuilt(name: string, staged: readonly Fact[]): string {
+	return [
+		renderFacts(`### Built \`${name}\``, staged),
+		'The Release job of this run uploads these files as they are.',
+		'',
+	].join('\n')
+}
+
+export function renderBuildFailure(name: string, cause: string): string {
+	return [
+		`### \`${name}\` was not built`,
+		'',
+		cause,
+		'',
+		'This run releases nothing of it, and the other deployables go on. Fix the build and merge the fix, or re-run the failed jobs of this run when the cause was transient.',
 		'',
 	].join('\n')
 }

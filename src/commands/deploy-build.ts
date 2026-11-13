@@ -1,16 +1,17 @@
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import {
 	confinedPath,
 	copyDirectory,
 	emptyDirectory,
 	moveDirectory,
+	packedTarball,
 	scratchDirectory,
 } from '../adapters/artifact-files.ts'
 import { readSubject } from '../adapters/checkout.ts'
 import { requiredVariable } from '../adapters/environment.ts'
 import { readPullRequestEvent } from '../adapters/event.ts'
-import { inGroup } from '../adapters/github.ts'
+import { inGroup, writeSummary } from '../adapters/github.ts'
 import { runInOrder, stream } from '../adapters/processes.ts'
 import { installDependencies } from '../adapters/program-install.ts'
 import { programRoot } from '../adapters/relocation.ts'
@@ -23,12 +24,19 @@ import {
 	installProfileOf,
 	pack,
 } from '../domain/deploy-commands.ts'
+import {
+	renderBuildFailure,
+	renderBuilt,
+	stagedWorker,
+} from '../domain/deploy-summary.ts'
 import { declarationFile } from '../domain/deployable.ts'
 import { bundlingConfig } from '../domain/wrangler-config.ts'
 
 import { artifactDirectory, requestedDeployable } from './deploy-job.ts'
 
 import type { WorkerDeclaration } from '../domain/declaration.ts'
+import type { Fact } from '../domain/deploy-summary.ts'
+import type { DeployEntry } from '../domain/deployable.ts'
 
 type Staging = {
 	readonly programRoot: string
@@ -41,8 +49,19 @@ type Staging = {
 // The job that runs the project's code: its install, its build, its bundling. It holds no
 // credential, and what it leaves is plain files for the job that does.
 export async function deployBuild(): Promise<void> {
-	const project = requiredVariable('GITHUB_WORKSPACE')
 	const entry = requestedDeployable()
+	try {
+		writeSummary(renderBuilt(entry.name, await buildAndStage(entry)))
+	} catch (failure: unknown) {
+		const cause =
+			failure instanceof Error ? failure.message : String(failure)
+		writeSummary(renderBuildFailure(entry.name, cause))
+		throw failure
+	}
+}
+
+async function buildAndStage(entry: DeployEntry): Promise<readonly Fact[]> {
+	const project = requiredVariable('GITHUB_WORKSPACE')
 	const artifact = artifactDirectory(project)
 	const root = programRoot()
 	await installDependencies(root, installProfileOf(entry.kind))
@@ -60,23 +79,25 @@ export async function deployBuild(): Promise<void> {
 		file: declarationFile(entry.directory),
 		staged: scratchDirectory('artifact'),
 	}
-	await (subject.declaration.kind === 'package'
+	const staged = await (subject.declaration.kind === 'package'
 		? stagePackage(staging)
 		: stageWorker(staging, subject.declaration))
 	moveDirectory(staging.staged, artifact)
+	return staged
 }
 
-async function stagePackage(staging: Staging): Promise<void> {
+async function stagePackage(staging: Staging): Promise<readonly Fact[]> {
 	const destination = emptyDirectory(join(staging.staged, ARTIFACT.package))
 	await inGroup('Pack the package', () =>
 		stream(pack(destination), staging.directory),
 	)
+	return [['Tarball', `\`${basename(packedTarball(destination))}\``]]
 }
 
 async function stageWorker(
 	staging: Staging,
 	declaration: WorkerDeclaration,
-): Promise<void> {
+): Promise<readonly Fact[]> {
 	const { directory, file, staged } = staging
 	await bundleWorker(staging, declaration)
 	if (declaration.assets) {
@@ -92,6 +113,7 @@ async function stageWorker(
 			join(staged, migrationsOf(database.binding)),
 		)
 	})
+	return stagedWorker(declaration)
 }
 
 // Wrangler bundles without uploading: the release uploads these files as they are, so
