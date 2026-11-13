@@ -153,9 +153,9 @@ export async function converge(convergence: Convergence): Promise<Provisioned> {
 	const cloudflare = await import('@pulumi/cloudflare')
 	const project = join(convergence.workDirectory, 'project')
 	mkdirSync(project, { recursive: true })
-	const pulumiCommand = await automation.PulumiCommand.get({
-		root: await installPulumi(join(convergence.workDirectory, 'cli')),
-	})
+	const cli = join(convergence.workDirectory, 'cli')
+	await installPulumi(cli)
+	const pulumiCommand = await automation.PulumiCommand.get({ root: cli })
 	const workspace = await automation.LocalWorkspace.create({
 		workDir: project,
 		pulumiCommand,

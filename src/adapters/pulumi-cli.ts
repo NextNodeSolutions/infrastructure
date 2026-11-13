@@ -37,12 +37,11 @@ async function pinnedArchive(): Promise<Buffer> {
 
 // The CLI the release provisions with, installed under root only once its archive
 // matches the pinned digest. The SDK runs root/bin/pulumi.
-export async function installPulumi(root: string): Promise<string> {
+export async function installPulumi(root: string): Promise<void> {
 	refuseOtherPlatform()
 	const archive = join(root, 'pulumi.tar.gz')
 	const binaries = join(root, 'bin')
 	mkdirSync(binaries, { recursive: true })
 	writeFileSync(archive, await pinnedArchive())
 	await stream(unpackPulumi(archive, binaries), root)
-	return root
 }
