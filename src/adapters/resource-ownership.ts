@@ -1,7 +1,7 @@
 import { decoder } from '../domain/decode.ts'
 import { refusal } from '../domain/refusal.ts'
 
-import { fieldsOf, isSuccess, send } from './http.ts'
+import { fieldsOf, isSuccess, NOT_FOUND, send } from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
 import type { Ownership } from '../domain/ownership.ts'
@@ -67,6 +67,18 @@ async function reserveName(
 	throw refusal(
 		file,
 		`${key} is reserved by ${holder}, not ${owner}. Choose another name; no existing claim is replaced`,
+	)
+}
+
+export async function isClaimed(
+	backend: StateBackend,
+	key: string,
+): Promise<boolean> {
+	const reply = await request(backend, 'GET', key)
+	if (reply.status === NOT_FOUND) return false
+	if (isSuccess(reply)) return true
+	throw new Error(
+		`The ownership store refused to read ${key} (HTTP ${reply.status})`,
 	)
 }
 

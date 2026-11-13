@@ -83,4 +83,4 @@ Names are lowercase and bounded in length, and a name that does not fit is refus
 
 The file is decoded strictly: an unknown key, a missing required key or a value of the wrong shape is refused, never ignored. The refusal is an annotation on the file that names the key and says what to write. It appears on the pull request that introduces the mistake, in the Plan job, before anything is built, and again in Discover if it reaches the default branch.
 
-Two refusals come later, from the Release job, because only the account can answer them: a hostname that already serves something else, and a Worker name that another repository deploys.
+Two refusals come later, from the Release job, because only the account can answer them: a hostname that already serves something else, and a Worker name that another repository holds or whose existing Worker nobody handed to this repository.

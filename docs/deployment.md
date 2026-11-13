@@ -111,8 +111,8 @@ sequenceDiagram
     participant C as Cloudflare
     participant W as Worker address
     R->>V: log in with a token that names the run, read the platform credentials
-    R->>C: read the Worker's tags and what holds the hostname
-    Note over R,C: refused when another repository deploys that Worker, or the hostname serves something else
+    R->>C: read the Worker's tags, what holds the hostname and whether the Worker's name is reserved
+    Note over R,C: refused when a Worker of that name exists that the repository neither reserved nor was handed, or the hostname serves something else
     R->>C: reserve resource names with create-only writes in the private state bucket
     opt the file binds databases or buckets
         R->>C: create the missing ones through Pulumi
@@ -222,6 +222,15 @@ Each job writes a summary. Discover lists every deployable with whether it deplo
 
 Nothing else is created by hand. The first release creates the Worker, its hostname, its databases and buckets and its GitHub environment.
 
+### Moving a Worker from core
+
+A Worker made by hand or by core's old pipeline may already serve under the name the repository derives. The first release refuses it until a person hands it over:
+
+1. Add the tag `nextnode:repository=<repository>`, with the repository's name in lowercase, to the Worker in Cloudflare. The refusal names the exact tag. Through the API it is `PATCH /accounts/<account>/workers/scripts/<worker>/script-settings` with the Worker's current tags plus this one, since the call replaces the list.
+2. Re-run the refused release. It reserves the name, uploads over the Worker and keeps the tag.
+
+The old version serves until the release replaces it, and a custom domain already attached to that Worker stays attached. A Worker under another name is not moved: the release creates a new one, and a person deletes the old one once traffic has moved.
+
 ## Trust boundary
 
 | Trusted                                                                                                                                                     | Untrusted                                                                                                                                    |
@@ -246,7 +255,7 @@ What the trusted side holds:
 The Cloudflare token reaches the whole account, so the program is what confines a project to its own resources:
 
 - **A file names no resource.** It has no key for a Worker name, an account, a database id or a bucket name. The program derives every name from the repository and the package.
-- **A Worker carries the repository that deploys it**, as a tag, and a release uploads over no Worker that carries another repository's. Two repositories can derive the same name, and the account has one namespace for all of them. A Worker made before the pipeline carries no tag and is taken by the first release to its name.
+- **A release takes over only a Worker it was handed.** A Worker that exists before its name is reserved, made by hand or by another pipeline, is refused unless a person tagged it `nextnode:repository=<repository>`. A Worker whose name the repository already reserved needs no tag, and every release tags its Worker with its repository as a label. Two repositories can derive the same name, and the account has one namespace for all of them.
 - **A hostname is taken only when nothing holds it**: no other Worker and no A, AAAA or CNAME record, in a zone of the account. Mail and verification records stay beside the Worker.
 - **Names are reserved before account changes.** Create-only R2 records bind Worker, hostname, database and bucket names to an immutable repository id and deployable. Reservations do not expire, so a slow release cannot lose its reservation to another project.
 - **A tarball is published only as the package and version the commit declares.**

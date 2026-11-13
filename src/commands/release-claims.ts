@@ -5,13 +5,14 @@ import {
 	stateBackend,
 	workerTags,
 } from '../adapters/cloudflare.ts'
-import { reserveOwnership } from '../adapters/resource-ownership.ts'
+import { isClaimed, reserveOwnership } from '../adapters/resource-ownership.ts'
 import { declarationFile } from '../domain/deployable.ts'
 import { refuseTakenHostname, zoneFor } from '../domain/hostname.ts'
 import {
 	ownershipOf,
-	refuseForeignWorker,
+	refuseWorkerNotHandedOver,
 	withOwner,
+	workerClaimKey,
 } from '../domain/ownership.ts'
 
 import type { Account } from '../adapters/cloudflare-api.ts'
@@ -28,16 +29,18 @@ export type Claim = {
 	readonly plan: ResourcePlan
 }
 
-async function ownedTags(
-	account: Account,
+async function refuseTakeover(
+	backend: StateBackend,
 	{ repository, deployable }: Claim,
-): Promise<readonly string[]> {
-	const tags = await workerTags(account, deployable.name)
-	refuseForeignWorker(
+	tags: readonly string[] | undefined,
+): Promise<void> {
+	if (!tags || (await isClaimed(backend, workerClaimKey(deployable.name)))) {
+		return
+	}
+	refuseWorkerNotHandedOver(
 		{ worker: deployable.name, repository, tags },
 		declarationFile(deployable.directory),
 	)
-	return withOwner(tags ?? [], repository)
 }
 
 async function refuseTaken(
@@ -67,10 +70,12 @@ export async function claimWorker(
 	account: Account,
 	claim: Claim,
 ): Promise<ClaimedWorker> {
-	const tags = await ownedTags(account, claim)
+	const { repository, deployable, declaration, plan } = claim
+	const tags = await workerTags(account, deployable.name)
 	await refuseTaken(account, claim)
-	const { deployable, declaration, plan } = claim
 	const backend = await stateBackend(account)
+	// Checked before the reservation, so that a refused release leaves no claim behind.
+	await refuseTakeover(backend, claim, tags)
 	await reserveOwnership(
 		backend,
 		ownershipOf({
@@ -81,5 +86,5 @@ export async function claimWorker(
 		}),
 		declarationFile(deployable.directory),
 	)
-	return { tags, backend }
+	return { tags: withOwner(tags ?? [], repository), backend }
 }

@@ -4,14 +4,13 @@ import type { ResourcePlan } from './resources.ts'
 
 const OWNER = 'nextnode:repository='
 
-// A Worker's name is derived from a repository and a package, and two repositories can
-// derive the same one. The account has one namespace for all of them, so a Worker carries
-// the repository that deploys it, and a release uploads over no Worker that carries
-// another.
-export type WorkerClaim = {
+// A Worker that exists before its name is claimed was made by hand or by another
+// pipeline. A release takes it over only when a person handed it to the repository by
+// setting the repository's owner tag on it.
+export type ExistingWorker = {
 	readonly worker: string
 	readonly repository: string
-	readonly tags: readonly string[] | undefined
+	readonly tags: readonly string[]
 }
 
 function ownerTag(repository: string): string {
@@ -26,15 +25,21 @@ export function withOwner(
 	return tags.includes(owner) ? tags : [...tags, owner]
 }
 
-export function refuseForeignWorker(claim: WorkerClaim, file: string): void {
-	const { worker, repository, tags } = claim
-	if (!tags || tags.includes(ownerTag(repository))) return
-	const other = tags.find(tag => tag.startsWith(OWNER))
-	if (!other) return
+export function refuseWorkerNotHandedOver(
+	existing: ExistingWorker,
+	file: string,
+): void {
+	const { worker, repository, tags } = existing
+	const owner = ownerTag(repository)
+	if (tags.includes(owner)) return
 	throw refusal(
 		file,
-		`the Worker ${worker} is deployed by the repository ${other.slice(OWNER.length)}. Rename the package, so that this one deploys under a name of its own`,
+		`the Worker ${worker} already exists and no repository holds its name. To hand it to this repository, add the tag ${owner} to it in Cloudflare, then release again. Otherwise rename the package, so that this one deploys under a name of its own`,
 	)
+}
+
+export function workerClaimKey(worker: string): string {
+	return `workers/${worker}`
 }
 
 // The names a release reserves in the state bucket before it writes, each held by the
@@ -57,7 +62,7 @@ export function ownershipOf(reservation: Reservation): Ownership {
 	return {
 		owner: `${repositoryId}/${worker}`,
 		keys: [
-			`workers/${worker}`,
+			workerClaimKey(worker),
 			...(hostname ? [`hostnames/${hostname}`] : []),
 			...plan.databases.map(database => `d1/${database.name}`),
 			...plan.buckets.map(bucket => `r2/${bucket.name}`),
