@@ -1,13 +1,15 @@
 import {
 	cpSync,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
+	realpathSync,
 	renameSync,
 	rmSync,
 } from 'node:fs'
-import { join } from 'node:path'
+import { isAbsolute, join, relative, sep } from 'node:path'
 
 import { requiredVariable } from './environment.ts'
 
@@ -24,14 +26,30 @@ export function emptyDirectory(path: string): string {
 	return path
 }
 
-// A link is copied as the file it points to: the artifact holds plain files only.
+export function confinedPath(directory: string, declared: string): string {
+	const source = join(directory, declared)
+	const resolved = relative(realpathSync(directory), realpathSync(source))
+	if (
+		isAbsolute(resolved) ||
+		resolved === '..' ||
+		resolved.startsWith(`..${sep}`)
+	) {
+		throw new Error(
+			`${source} resolves outside ${directory}: use a path inside the deployable`,
+		)
+	}
+	return source
+}
+
+// Preserving links during the copy lets Release refuse one a concurrent build created.
 export function copyDirectory(source: string, destination: string): void {
 	if (!existsSync(source)) {
 		throw new Error(
 			`${source} does not exist after the build: the file names a directory the build did not write`,
 		)
 	}
-	cpSync(source, destination, { recursive: true, dereference: true })
+	refuseAnythingButFiles(source)
+	cpSync(source, destination, { recursive: true, dereference: false })
 }
 
 export function moveDirectory(source: string, destination: string): void {
@@ -42,6 +60,11 @@ export function moveDirectory(source: string, destination: string): void {
 // A build ran the project's code, so what it left is data to the release: plain files and
 // directories, nothing that points elsewhere.
 export function refuseAnythingButFiles(root: string): void {
+	if (!lstatSync(root).isDirectory()) {
+		throw new Error(
+			`${root} must be a directory, not a link or special file`,
+		)
+	}
 	const foreign = readdirSync(root, {
 		withFileTypes: true,
 		recursive: true,

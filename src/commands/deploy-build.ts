@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 
 import {
+	confinedPath,
 	copyDirectory,
 	emptyDirectory,
 	moveDirectory,
@@ -77,14 +78,14 @@ async function stageWorker(
 	await bundleWorker(staging, declaration)
 	if (declaration.assets) {
 		copyDirectory(
-			join(directory, declaration.assets.directory),
+			confinedPath(directory, declaration.assets.directory),
 			join(staged, ARTIFACT.assets),
 		)
 	}
 	declaration.databases.forEach(database => {
 		if (!database.migrationsDirectory) return
 		copyDirectory(
-			join(directory, database.migrationsDirectory),
+			confinedPath(directory, database.migrationsDirectory),
 			join(staged, migrationsOf(database.binding)),
 		)
 	})
@@ -104,7 +105,7 @@ async function bundleWorker(
 		bundlingConfig(
 			staging.name,
 			declaration,
-			join(staging.directory, declaration.main),
+			confinedPath(staging.directory, declaration.main),
 		),
 	)
 	await inGroup('Bundle the Worker', () =>
