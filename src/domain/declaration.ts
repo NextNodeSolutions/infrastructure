@@ -25,7 +25,9 @@ export type WorkerDeclaration = {
 	readonly healthPath: string
 }
 
-export const PACKAGE_ACCESSES = ['public', 'restricted'] as const
+// Public only: a release asks the registry without a credential whether a version
+// exists, and a restricted package would answer that it has none.
+export const PACKAGE_ACCESSES = ['public'] as const
 export type PackageAccess = (typeof PACKAGE_ACCESSES)[number]
 
 export type PackageDeclaration = {

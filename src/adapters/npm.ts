@@ -122,8 +122,7 @@ export async function latestVersion(name: string): Promise<string | undefined> {
 	return latest
 }
 
-// Asked without a credential: a restricted package answers as if it had no version, so
-// its publication is decided by the registry when it refuses a version it already has.
+// Asked without a credential, which sees every version of a public package.
 export async function hasVersion(published: PublishedAs): Promise<boolean> {
 	const reply = await send({
 		method: 'GET',

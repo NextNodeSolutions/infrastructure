@@ -88,10 +88,9 @@ export async function releasePackage(
 		),
 	)
 	const listed = await until(() => listing(published), PATIENCE)
-	const visibility =
-		listed || declaration.access === 'restricted'
-			? 'accepted by the registry'
-			: 'accepted by the registry, not listed yet'
+	const visibility = listed
+		? 'accepted by the registry'
+		: 'accepted by the registry, not listed yet'
 	const url = `${NPM_PACKAGE_PAGE}/${published.name}/v/${published.version}`
 	return {
 		name: subject.deployable.name,
