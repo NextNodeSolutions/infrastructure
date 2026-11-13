@@ -21,6 +21,13 @@ export type Provisioned = {
 	readonly databaseIds: Readonly<Record<string, string>>
 }
 
+// The planned stores the account already holds, as a binding that left the file leaves
+// them. Only the claim of this repository and Worker reserves their names.
+export type RetainedStores = {
+	readonly databases: readonly (NamedResource & { readonly id: string })[]
+	readonly buckets: readonly NamedResource[]
+}
+
 export const NO_RESOURCES: ResourcePlan = { databases: [], buckets: [] }
 
 export const NOTHING_PROVISIONED: Provisioned = { databaseIds: {} }

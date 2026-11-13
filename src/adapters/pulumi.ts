@@ -6,14 +6,22 @@ import { decoder } from '../domain/decode.ts'
 import { installPulumi } from './pulumi-cli.ts'
 
 import type * as CloudflareProvider from '@pulumi/cloudflare'
+import type { CustomResourceOptions } from '@pulumi/pulumi'
+import type { Deployment } from '@pulumi/pulumi/automation/index.js'
 import type { PlatformCredentials } from '../domain/platform.ts'
-import type { Provisioned, ResourcePlan } from '../domain/resources.ts'
+import type {
+	NamedResource,
+	Provisioned,
+	ResourcePlan,
+	RetainedStores,
+} from '../domain/resources.ts'
 import type { StateBackend } from './cloudflare.ts'
 
 export type Convergence = {
 	readonly project: string
 	readonly stack: string
 	readonly plan: ResourcePlan
+	readonly retained: RetainedStores
 	readonly credentials: PlatformCredentials
 	readonly backend: StateBackend
 	readonly workDirectory: string
@@ -22,10 +30,61 @@ export type Convergence = {
 type CloudflareSdk = typeof CloudflareProvider
 type Program = () => Promise<Record<string, unknown>>
 
+// The import id of a store, by binding.
+type Imports = {
+	readonly databases: Readonly<Record<string, string>>
+	readonly buckets: Readonly<Record<string, string>>
+}
+
+const DATABASE_TYPE = 'cloudflare:index/d1Database:D1Database'
+const BUCKET_TYPE = 'cloudflare:index/r2Bucket:R2Bucket'
+const BUCKET_JURISDICTION = 'default'
+
 // A binding removed from the file leaves its data in the account for a person to delete.
 const KEPT = { retainOnDelete: true }
 
 const decode = decoder(message => new Error(`Pulumi: ${message}`))
+
+function optionsOf(importId: string | undefined): CustomResourceOptions {
+	return importId ? { ...KEPT, import: importId } : KEPT
+}
+
+// The URNs of the resources the state holds. A top-level URN ends with ::type::name.
+function managedIn(exported: Deployment): readonly string[] {
+	const state = decode.record(exported.deployment, 'the state of the stack')
+	if (!state.resources) return []
+	return decode
+		.records(state, 'resources')
+		.map(resource => decode.string(resource, 'urn'))
+}
+
+// A store the account holds and the state lost, as when its binding left the file and
+// came back, is imported with its data instead of created again.
+function importsOf(
+	retained: RetainedStores,
+	managed: readonly string[],
+	accountId: string,
+): Imports {
+	const isLost =
+		(type: string) =>
+		({ binding }: NamedResource): boolean =>
+			!managed.some(urn => urn.endsWith(`::${type}::${binding}`))
+	return {
+		databases: Object.fromEntries(
+			retained.databases
+				.filter(isLost(DATABASE_TYPE))
+				.map(({ binding, id }) => [binding, `${accountId}/${id}`]),
+		),
+		buckets: Object.fromEntries(
+			retained.buckets
+				.filter(isLost(BUCKET_TYPE))
+				.map(({ binding, name }) => [
+					binding,
+					`${accountId}/${name}/${BUCKET_JURISDICTION}`,
+				]),
+		),
+	}
+}
 
 function databaseIdsOf(output: unknown): Provisioned {
 	const ids = decode.record(output, 'the databases of the stack')
@@ -43,6 +102,7 @@ function resourcesOf(
 	cloudflare: CloudflareSdk,
 	plan: ResourcePlan,
 	accountId: string,
+	imports: Imports,
 ): Program {
 	return () => {
 		const databases = plan.databases.map(
@@ -52,14 +112,17 @@ function resourcesOf(
 					new cloudflare.D1Database(
 						binding,
 						{ accountId, name },
-						KEPT,
+						optionsOf(imports.databases[binding]),
 					).id,
 				] as const,
 		)
 		const buckets = plan.buckets.map(
 			({ binding, name }) =>
-				new cloudflare.R2Bucket(binding, { accountId, name }, KEPT)
-					.name,
+				new cloudflare.R2Bucket(
+					binding,
+					{ accountId, name },
+					optionsOf(imports.buckets[binding]),
+				).name,
 		)
 		return Promise.resolve({
 			databaseIds: Object.fromEntries(databases),
@@ -93,29 +156,29 @@ export async function converge(convergence: Convergence): Promise<Provisioned> {
 	const pulumiCommand = await automation.PulumiCommand.get({
 		root: await installPulumi(join(convergence.workDirectory, 'cli')),
 	})
-	const stack = await automation.LocalWorkspace.createOrSelectStack(
-		{
-			stackName: convergence.stack,
-			projectName: convergence.project,
-			program: resourcesOf(
-				cloudflare,
-				convergence.plan,
-				convergence.credentials.cloudflareAccount,
-			),
+	const workspace = await automation.LocalWorkspace.create({
+		workDir: project,
+		pulumiCommand,
+		secretsProvider: 'passphrase',
+		projectSettings: {
+			name: convergence.project,
+			runtime: 'nodejs',
+			backend: { url: convergence.backend.url },
 		},
-		{
-			workDir: project,
-			pulumiCommand,
-			secretsProvider: 'passphrase',
-			projectSettings: {
-				name: convergence.project,
-				runtime: 'nodejs',
-				backend: { url: convergence.backend.url },
-			},
-			envVars: environmentOf(convergence),
-		},
+		envVars: environmentOf(convergence),
+	})
+	const stack = await automation.Stack.createOrSelect(
+		convergence.stack,
+		workspace,
+	)
+	const accountId = convergence.credentials.cloudflareAccount
+	const imports = importsOf(
+		convergence.retained,
+		managedIn(await stack.exportStack()),
+		accountId,
 	)
 	const { outputs } = await stack.up({
+		program: resourcesOf(cloudflare, convergence.plan, accountId, imports),
 		onOutput: text => process.stdout.write(text),
 		refresh: true,
 	})

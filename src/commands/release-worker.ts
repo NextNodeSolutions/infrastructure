@@ -1,5 +1,6 @@
 import { scratchDirectory } from '../adapters/artifact-files.ts'
 import { accountOf } from '../adapters/cloudflare-api.ts'
+import { retainedStores } from '../adapters/cloudflare-stores.ts'
 import { tagWorker } from '../adapters/cloudflare.ts'
 import { inGroup } from '../adapters/github.ts'
 import { waitUntilHealthy } from '../adapters/health.ts'
@@ -87,10 +88,11 @@ async function provision(
 	credentials: PlatformCredentials,
 ): Promise<Provisioned> {
 	if (!hasResources(plan)) return NOTHING_PROVISIONED
-	return inGroup('Provision the databases and buckets', () =>
+	return inGroup('Provision the databases and buckets', async () =>
 		converge({
 			...stack,
 			plan,
+			retained: await retainedStores(accountOf(credentials), plan),
 			credentials,
 			workDirectory: scratchDirectory('pulumi'),
 		}),
