@@ -52,7 +52,7 @@ export async function releaseWorker(
 	const provisioned = await provision(
 		{ project: context.repository, stack: deployable.name, backend },
 		plan,
-		credentials,
+		{ credentials, account },
 	)
 	const uploaded = await uploadRelease(
 		{
@@ -81,18 +81,23 @@ export async function releaseWorker(
 	}
 }
 
+type Platform = {
+	readonly credentials: PlatformCredentials
+	readonly account: Account
+}
+
 // One Pulumi project per repository, one stack per deployable.
 async function provision(
 	stack: Stack,
 	plan: ResourcePlan,
-	credentials: PlatformCredentials,
+	{ credentials, account }: Platform,
 ): Promise<Provisioned> {
 	if (!hasResources(plan)) return NOTHING_PROVISIONED
 	return inGroup('Provision the databases and buckets', async () =>
 		converge({
 			...stack,
 			plan,
-			retained: await retainedStores(accountOf(credentials), plan),
+			retained: await retainedStores(account, plan),
 			credentials,
 			workDirectory: scratchDirectory('pulumi'),
 		}),
