@@ -99,7 +99,7 @@ sequenceDiagram
 
 Builds run in parallel, one runner per deployable, and so do releases. One deployable failing stops no other.
 
-A build runs the project's `build` script through the same executor the checks use, then stages what a release needs: the Worker's code as Wrangler bundles it without uploading and without an account, the assets directory, the migrations of each database, or the tarball that `pnpm pack` writes. A single package without a `build` script has nothing to build and its files are staged as they are. A link in those directories is staged as the file it points to.
+A build runs the project's `build` script through the same executor the checks use, then stages what a release needs: the Worker's code as Wrangler bundles it without uploading and without an account, the assets directory, the migrations of each database, or the tarball that `pnpm pack` writes. A single package without a `build` script has nothing to build and its files are staged as they are. Declared source paths resolve inside the deployable, and asset and migration directories with links or special files are refused. Copying preserves a link created during the copy so Release can refuse it.
 
 ### Releasing a Worker
 
