@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { decoder } from '../domain/decode.ts'
 import { printPackedManifest } from '../domain/deploy-commands.ts'
 import { decodeManifest } from '../domain/manifest.ts'
+import { untrustedPackage } from '../domain/npm-trust.ts'
 import { NPM_REGISTRY } from '../domain/platform.ts'
 import { refusal } from '../domain/refusal.ts'
 
@@ -29,6 +30,7 @@ const REGISTRY_HOST = new URL(NPM_REGISTRY).host
 const TOKEN_VARIABLE = 'NODE_AUTH_TOKEN'
 const CONFIG_FILE = 'npmrc'
 const PACKED_MANIFEST = 'the package.json of the tarball'
+const FIRST_SERVER_ERROR = 500
 const SHORT_DOCUMENT = 'application/vnd.npm.install-v1+json'
 
 const decode = decoder(message => new Error(`The npm registry: ${message}`))
@@ -77,10 +79,13 @@ export async function publishToken(
 		url: `${NPM_REGISTRY}/-/npm/v1/oidc/token/exchange/package/${registryPath(name)}`,
 		headers: { authorization: `Bearer ${runToken}` },
 	})
-	if (!isSuccess(reply)) {
+	if (reply.status >= FIRST_SERVER_ERROR) {
 		throw new Error(
-			`The npm registry trusts no publication of ${name} from this run (HTTP ${reply.status}): ${messageOf(reply)}. The package must exist on the registry and name this repository and the Deploy workflow as its trusted publisher`,
+			`The npm registry failed to trade this run's token for one of ${name} (HTTP ${reply.status}): ${messageOf(reply)}. Nothing was published: re-run the failed jobs`,
 		)
+	}
+	if (!isSuccess(reply)) {
+		throw new Error(untrustedPackage(name, reply.status, messageOf(reply)))
 	}
 	const token = decode.string(fieldsOf(reply, 'The npm registry'), 'token')
 	maskSecret(token)

@@ -4,6 +4,7 @@ import { DEPLOY_WORKFLOW_FILE } from './platform.ts'
 import type { Fields } from './decode.ts'
 
 export const NPM_SETUP = 'pnpm setup-npm'
+const PLATFORM_CHECKOUT = 'a checkout of NextNodeSolutions/infrastructure'
 const GITHUB_PROVIDER = 'github'
 const PUBLISH_PERMISSION = 'createPackage'
 const APPROVAL_CODE = 'EOTP'
@@ -20,6 +21,10 @@ export type TrustedPublisher = {
 	readonly file: string | undefined
 	readonly environment: string | undefined
 	readonly permissions: readonly string[] | undefined
+}
+
+export function setupInstruction(project: string): string {
+	return `in a terminal, in ${PLATFORM_CHECKOUT} with its dependencies installed, run \`${NPM_SETUP} ${project}\``
 }
 
 function publisherOf(fields: Fields): TrustedPublisher {
@@ -90,4 +95,12 @@ export function occupiedTrust(
 
 export function asksForApproval(complaint: string): boolean {
 	return complaint.includes(APPROVAL_CODE)
+}
+
+export function untrustedPackage(
+	name: string,
+	status: number,
+	detail: string,
+): string {
+	return `The npm registry trusts no publication of ${name} from this run (HTTP ${status}: ${detail}), so nothing was published. A person sets the package up once: ${setupInstruction('<checkout of this repository at this commit>')}. When npm already lists ${DEPLOY_WORKFLOW_FILE} of this repository as its trusted publisher, that configuration expired unused two days after it was set: delete it in the package's settings on npmjs.com, then run the command again`
 }
