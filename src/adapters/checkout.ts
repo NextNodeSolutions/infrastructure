@@ -6,39 +6,35 @@ import { NEXTNODE_FILE } from '../domain/declaration.ts'
 import { declarationFile } from '../domain/deployable.ts'
 import { ROOT_DIRECTORY } from '../domain/directory.ts'
 import { executorFor, TURBO_FILE, WORKSPACE_FILE } from '../domain/executor.ts'
-import {
-	decodeManifest,
-	MANIFEST_FILE,
-	manifestFile,
-} from '../domain/manifest.ts'
+import { manifestFile } from '../domain/manifest.ts'
 import { Refusal } from '../domain/refusal.ts'
 import { WITHOUT_BASE } from '../domain/selection.ts'
 import { subjectOf } from '../domain/subject.ts'
 import { readToolchain } from '../domain/toolchain.ts'
 
-import { hasFile, readJsonFile } from './files.ts'
+import { hasFile, readJsonFile, readManifest } from './files.ts'
 import { decodeListing, throughNpm } from './pnpm.ts'
 import { capture } from './processes.ts'
 import { parseToml } from './toml.ts'
 
 import type { Executor } from '../domain/executor.ts'
+import type { Manifest } from '../domain/manifest.ts'
 import type { Subject } from '../domain/subject.ts'
 import type { Toolchain } from '../domain/toolchain.ts'
 
 // The project as a job checked it out: where it is, what it is built with and how.
 export type Checkout = {
 	readonly project: string
+	readonly manifest: Manifest
 	readonly toolchain: Toolchain
 	readonly executor: Executor
 }
 
 export function readCheckout(project: string): Checkout {
-	const manifest = decodeManifest(
-		readJsonFile(join(project, MANIFEST_FILE), MANIFEST_FILE),
-		MANIFEST_FILE,
-	)
+	const manifest = readManifest(project)
 	return {
 		project,
+		manifest,
 		toolchain: readToolchain(manifest),
 		executor: executorFor({
 			hasWorkspaceFile: hasFile(join(project, WORKSPACE_FILE)),

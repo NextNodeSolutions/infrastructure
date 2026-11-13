@@ -1,6 +1,10 @@
 import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 
+import { decodeManifest, MANIFEST_FILE } from '../domain/manifest.ts'
 import { Refusal } from '../domain/refusal.ts'
+
+import type { Manifest } from '../domain/manifest.ts'
 
 export function hasFile(path: string): boolean {
 	return existsSync(path)
@@ -13,4 +17,11 @@ export function readJsonFile(path: string, file: string): unknown {
 	} catch (failure: unknown) {
 		throw new Refusal(file, `${file} is not valid JSON`, { cause: failure })
 	}
+}
+
+export function readManifest(
+	root: string,
+	file: string = MANIFEST_FILE,
+): Manifest {
+	return decodeManifest(readJsonFile(join(root, file), file), file)
 }

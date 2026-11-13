@@ -1,7 +1,8 @@
 import { join, relative } from 'node:path'
 
+import { readCheckout } from '../adapters/checkout.ts'
 import { optionalVariable, requiredVariable } from '../adapters/environment.ts'
-import { hasFile, readJsonFile } from '../adapters/files.ts'
+import { hasFile, readManifest } from '../adapters/files.ts'
 import { hasChangesIn, mergeBase } from '../adapters/git.ts'
 import { writeOutputs, writeSummary } from '../adapters/github.ts'
 import { decodeListing, throughNpm } from '../adapters/pnpm.ts'
@@ -9,12 +10,7 @@ import { capture } from '../adapters/processes.ts'
 import { programRevision } from '../adapters/program-directory.ts'
 import { listPackages } from '../domain/commands.ts'
 import { ROOT_DIRECTORY } from '../domain/directory.ts'
-import { executorFor, TURBO_FILE, WORKSPACE_FILE } from '../domain/executor.ts'
-import {
-	decodeManifest,
-	MANIFEST_FILE,
-	manifestFile,
-} from '../domain/manifest.ts'
+import { MANIFEST_FILE, manifestFile } from '../domain/manifest.ts'
 import { NOTHING_TO_CHECK, outputsFor } from '../domain/outputs.ts'
 import { planFor } from '../domain/plan.ts'
 import {
@@ -24,9 +20,7 @@ import {
 	WITHOUT_BASE,
 } from '../domain/selection.ts'
 import { NO_MANIFEST_SUMMARY, renderSummary } from '../domain/summary.ts'
-import { readToolchain } from '../domain/toolchain.ts'
 
-import type { Manifest } from '../domain/manifest.ts'
 import type { Package } from '../domain/plan.ts'
 import type { Selection } from '../domain/selection.ts'
 
@@ -34,18 +28,12 @@ const PULL_REQUEST = 'pull_request'
 
 export async function discover(): Promise<void> {
 	const project = requiredVariable('GITHUB_WORKSPACE')
-	const manifestPath = join(project, MANIFEST_FILE)
-	if (!hasFile(manifestPath)) {
+	if (!hasFile(join(project, MANIFEST_FILE))) {
 		writeOutputs(NOTHING_TO_CHECK)
 		writeSummary(NO_MANIFEST_SUMMARY)
 		return
 	}
-	const manifest = readManifest(project, MANIFEST_FILE)
-	const toolchain = readToolchain(manifest)
-	const executor = executorFor({
-		hasWorkspaceFile: hasFile(join(project, WORKSPACE_FILE)),
-		hasTurboFile: hasFile(join(project, TURBO_FILE)),
-	})
+	const { manifest, toolchain, executor } = readCheckout(project)
 	const selection =
 		executor === 'single'
 			? SINGLE_PACKAGE
@@ -70,10 +58,6 @@ export async function discover(): Promise<void> {
 			programRevision: await programRevision(),
 		}),
 	)
-}
-
-function readManifest(project: string, file: string): Manifest {
-	return decodeManifest(readJsonFile(join(project, file), file), file)
 }
 
 async function workspaceSelection(project: string): Promise<Selection> {
