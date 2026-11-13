@@ -14,7 +14,7 @@ export type WorkerClaim = {
 	readonly tags: readonly string[] | undefined
 }
 
-export function ownerTag(repository: string): string {
+function ownerTag(repository: string): string {
 	return `${OWNER}${repository.toLowerCase()}`
 }
 

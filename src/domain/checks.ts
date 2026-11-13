@@ -3,7 +3,7 @@ export type Check = {
 	readonly label: string
 }
 
-export const KNOWN_CHECKS: readonly Check[] = [
+const KNOWN_CHECKS: readonly Check[] = [
 	{ script: 'lint', label: 'Lint' },
 	{ script: 'type-check', label: 'TypeScript' },
 	{ script: 'test:unit', label: 'Unit tests' },
