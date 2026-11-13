@@ -2,12 +2,12 @@ import { hasChangesIn, relationToHead } from '../adapters/git.ts'
 import { lastDeployedCommit } from '../adapters/github-deployments.ts'
 import { hasVersion } from '../adapters/npm.ts'
 import { listWorkspace } from '../adapters/pnpm.ts'
-import { changedSince } from '../domain/deploy-commands.ts'
 import {
 	NEVER_DEPLOYED,
 	verdictFor,
 	withPublication,
 } from '../domain/deploy-selection.ts'
+import { changedSince } from '../domain/selection.ts'
 import { ROOT_FILES } from '../domain/selection.ts'
 import { publishedAs } from '../domain/subject.ts'
 

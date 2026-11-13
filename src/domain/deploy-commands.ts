@@ -50,12 +50,6 @@ export function deployableBuild(
 	})
 }
 
-// Every package a change since the base reaches, through pnpm's own graph. A deployment
-// ignores no file: Markdown is content for a site, so it selects like code does.
-export function changedSince(base: string): readonly string[] {
-	return ['--filter', `...[${base}]`]
-}
-
 export function pack(destination: string): Command {
 	return pnpm('pack', '--pack-destination', destination)
 }
