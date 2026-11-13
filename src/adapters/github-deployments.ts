@@ -2,7 +2,7 @@ import { decoder } from '../domain/decode.ts'
 
 import { refusedBy } from './github-api.ts'
 import { successfulPipelineDeployment } from './github-release-proof.ts'
-import { isSuccess } from './http.ts'
+import { fieldsOf, isSuccess, recordsOf } from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
 import type { GitHub } from './github-api.ts'
@@ -16,8 +16,7 @@ const decode = decoder(message => new Error(`GitHub deployments: ${message}`))
 
 function listOf(reply: Reply, action: string): readonly Fields[] {
 	if (!isSuccess(reply)) throw refusedBy(reply, action)
-	const parsed: unknown = JSON.parse(reply.text)
-	return decode.records({ listed: parsed }, 'listed')
+	return recordsOf(reply, 'GitHub deployments')
 }
 
 function idOf(deployment: Fields): number {
@@ -90,8 +89,7 @@ export async function createDeployment(
 	})
 	if (!isSuccess(reply))
 		throw refusedBy(reply, `record a deployment of ${record.environment}`)
-	const parsed: unknown = JSON.parse(reply.text)
-	return idOf(decode.record(parsed, 'the deployment'))
+	return idOf(fieldsOf(reply, 'GitHub deployments'))
 }
 
 export type DeploymentStatus = {

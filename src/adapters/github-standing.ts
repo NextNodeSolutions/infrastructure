@@ -2,7 +2,7 @@ import { decoder } from '../domain/decode.ts'
 import { DEPLOYMENTS_BRANCH, standingPullRequest } from '../domain/occasion.ts'
 
 import { refusedBy } from './github-api.ts'
-import { isSuccess, NOT_FOUND } from './http.ts'
+import { fieldsOf, isSuccess, NOT_FOUND, recordsOf } from './http.ts'
 
 import type { PullRequestEvent } from '../domain/occasion.ts'
 import type { GitHub } from './github-api.ts'
@@ -21,8 +21,7 @@ export async function hasStandingPullRequest(
 	)
 	if (!isSuccess(reply))
 		throw refusedBy(reply, 'look for the standing pull request')
-	const parsed: unknown = JSON.parse(reply.text)
-	return decode.records({ listed: parsed }, 'listed').length > 0
+	return recordsOf(reply, 'GitHub').length > 0
 }
 
 // The branch starts one commit behind the default branch: a pull request needs a commit
@@ -39,11 +38,7 @@ async function ensureBranch(
 		`/commits/${encodeURIComponent(event.defaultBranch)}`,
 	)
 	if (!isSuccess(tip)) throw refusedBy(tip, `read ${event.defaultBranch}`)
-	const parsed: unknown = JSON.parse(tip.text)
-	const [parent] = decode.records(
-		decode.record(parsed, 'a commit'),
-		'parents',
-	)
+	const [parent] = decode.records(fieldsOf(tip, 'GitHub'), 'parents')
 	if (!parent) {
 		return `\`${event.defaultBranch}\` has a single commit, so nothing can stand behind it yet. The next pull request opens the standing one.`
 	}

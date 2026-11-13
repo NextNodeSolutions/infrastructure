@@ -1,6 +1,6 @@
 import { decoder } from '../domain/decode.ts'
 
-import type { Fields } from '../domain/decode.ts'
+import type { Decoder, Fields } from '../domain/decode.ts'
 
 export type Reply = {
 	readonly status: number
@@ -44,18 +44,34 @@ export function isSuccess(reply: Reply): boolean {
 	return reply.status >= FIRST_SUCCESS && reply.status < FIRST_REDIRECT
 }
 
-// The body of a reply as fields, for a service that answers with a JSON object.
-export function fieldsOf(reply: Reply, service: string): Fields {
+function bodyOf<Body>(
+	reply: Reply,
+	service: string,
+	shape: string,
+	read: (parsed: unknown, decode: Decoder) => Body,
+): Body {
 	const decode = decoder(message => new Error(`${service}: ${message}`))
 	try {
 		const parsed: unknown = JSON.parse(reply.text)
-		return decode.record(parsed, 'the reply')
+		return read(parsed, decode)
 	} catch (failure: unknown) {
 		throw new Error(
-			`${service} answered HTTP ${reply.status} with a body that is not a JSON object`,
+			`${service} answered HTTP ${reply.status} with a body that is not ${shape}`,
 			{ cause: failure },
 		)
 	}
+}
+
+export function fieldsOf(reply: Reply, service: string): Fields {
+	return bodyOf(reply, service, 'a JSON object', (parsed, decode) =>
+		decode.record(parsed, 'the reply'),
+	)
+}
+
+export function recordsOf(reply: Reply, service: string): readonly Fields[] {
+	return bodyOf(reply, service, 'a JSON list of objects', (parsed, decode) =>
+		decode.recordList(parsed, 'the reply'),
+	)
 }
 
 // The body of a refusal as fields, and none when it is not a JSON object: a refusal is

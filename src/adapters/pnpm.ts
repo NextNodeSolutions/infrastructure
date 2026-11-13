@@ -39,15 +39,10 @@ function decodeListing(printed: string): readonly Printed[] {
 	if (printed.trim() === '') return []
 	const decode = decoder(message => new Error(`pnpm ls: ${message}`))
 	const parsed: unknown = JSON.parse(printed)
-	if (!Array.isArray(parsed)) throw new Error('pnpm ls: expected a JSON list')
-	const entries: readonly unknown[] = parsed
-	return entries.map(entry => {
-		const fields = decode.record(entry, 'a listed package')
-		return {
-			name: decode.string(fields, 'name'),
-			path: decode.string(fields, 'path'),
-		}
-	})
+	return decode.recordList(parsed, 'the listing').map(fields => ({
+		name: decode.string(fields, 'name'),
+		path: decode.string(fields, 'path'),
+	}))
 }
 
 export async function listWorkspace(

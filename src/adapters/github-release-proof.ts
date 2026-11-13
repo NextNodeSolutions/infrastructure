@@ -1,7 +1,7 @@
 import { decoder } from '../domain/decode.ts'
 
 import { refusedBy } from './github-api.ts'
-import { fieldsOf, isSuccess, NOT_FOUND } from './http.ts'
+import { fieldsOf, isSuccess, NOT_FOUND, recordsOf } from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
 import type { GitHub } from './github-api.ts'
@@ -94,8 +94,7 @@ export async function successfulPipelineDeployment(
 		`/deployments/${record.id}/statuses?per_page=${JOBS_PER_PAGE}&page=${page}`,
 	)
 	if (!isSuccess(reply)) throw refusedBy(reply, 'read deployment statuses')
-	const parsed: unknown = JSON.parse(reply.text)
-	const statuses = decode.records({ statuses: parsed }, 'statuses')
+	const statuses = recordsOf(reply, 'GitHub release proof')
 	if (await hasReleaseProof(api, record, statuses)) return true
 	if (statuses.length < JOBS_PER_PAGE) return false
 	return successfulPipelineDeployment(api, record, page + 1)

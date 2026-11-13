@@ -6,6 +6,7 @@ export type Decoder = {
 	readonly optionalString: (fields: Fields, key: string) => string | undefined
 	readonly optionalRecord: (fields: Fields, key: string) => Fields | undefined
 	readonly strings: (fields: Fields, key: string) => readonly string[]
+	readonly recordList: (parsed: unknown, what: string) => readonly Fields[]
 	readonly records: (fields: Fields, key: string) => readonly Fields[]
 	readonly keysOf: (fields: Fields, key: string) => readonly string[]
 	readonly onlyKeys: (
@@ -53,13 +54,15 @@ function scalars(invalid: Invalid, container: string): Scalars {
 }
 
 function lists(invalid: Invalid, { record, optionalRecord }: Scalars): Lists {
-	const list = (fields: Fields, key: string): readonly unknown[] => {
-		if (!(key in fields)) return []
-		const field = fields[key]
-		if (!Array.isArray(field)) throw invalid(`${key} must be a list`)
-		const entries: readonly unknown[] = field
+	const listed = (parsed: unknown, what: string): readonly unknown[] => {
+		if (!Array.isArray(parsed)) throw invalid(`${what} must be a list`)
+		const entries: readonly unknown[] = parsed
 		return entries
 	}
+	const list = (fields: Fields, key: string): readonly unknown[] =>
+		key in fields ? listed(fields[key], key) : []
+	const recordList = (parsed: unknown, what: string): readonly Fields[] =>
+		listed(parsed, what).map(entry => record(entry, `an entry of ${what}`))
 	return {
 		strings: (fields, key) =>
 			list(fields, key).map(entry => {
@@ -67,8 +70,9 @@ function lists(invalid: Invalid, { record, optionalRecord }: Scalars): Lists {
 					throw invalid(`${key} must list strings`)
 				return entry
 			}),
+		recordList,
 		records: (fields, key) =>
-			list(fields, key).map(entry => record(entry, `an entry of ${key}`)),
+			key in fields ? recordList(fields[key], key) : [],
 		keysOf: (fields, key) => Object.keys(optionalRecord(fields, key) ?? {}),
 		onlyKeys: (fields, accepted, what) => {
 			const refused = Object.keys(fields).filter(
