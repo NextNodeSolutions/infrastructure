@@ -149,12 +149,14 @@ function environmentOf({
 // The SDK is loaded when called, like every dependency of the program. It hands the CLI
 // the job's environment, which holds no token by then, and the variables named here.
 export async function converge(convergence: Convergence): Promise<Provisioned> {
-	const automation = await import('@pulumi/pulumi/automation/index.js')
-	const cloudflare = await import('@pulumi/cloudflare')
+	const cli = join(convergence.workDirectory, 'cli')
+	const [automation, cloudflare] = await Promise.all([
+		import('@pulumi/pulumi/automation/index.js'),
+		import('@pulumi/cloudflare'),
+		installPulumi(cli),
+	])
 	const project = join(convergence.workDirectory, 'project')
 	mkdirSync(project, { recursive: true })
-	const cli = join(convergence.workDirectory, 'cli')
-	await installPulumi(cli)
 	const pulumiCommand = await automation.PulumiCommand.get({ root: cli })
 	const workspace = await automation.LocalWorkspace.create({
 		workDir: project,
