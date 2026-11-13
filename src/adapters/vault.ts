@@ -3,35 +3,12 @@ import { PLATFORM_SECRETS, VAULT } from '../domain/platform.ts'
 
 import { maskSecret } from './github.ts'
 import { fieldsOf, isSuccess, messageOf, send } from './http.ts'
+import { identityToken } from './run-identity.ts'
 
 import type { PlatformCredentials } from '../domain/platform.ts'
-
-// What GitHub gives a job to ask for a token that names the run: its repository, its
-// workflow, its event and the branches of its pull request.
-export type RunIdentity = {
-	readonly url: string
-	readonly token: string
-}
+import type { RunIdentity } from './run-identity.ts'
 
 const decode = decoder(message => new Error(`The vault: ${message}`))
-
-async function runToken(identity: RunIdentity): Promise<string> {
-	const url = new URL(identity.url)
-	url.searchParams.set('audience', VAULT.audience)
-	const reply = await send({
-		method: 'GET',
-		url: url.href,
-		headers: { authorization: `Bearer ${identity.token}` },
-	})
-	if (!isSuccess(reply)) {
-		throw new Error(
-			`GitHub issued no identity token to this job (HTTP ${reply.status}): ${messageOf(reply)}`,
-		)
-	}
-	const token = decode.string(fieldsOf(reply, 'GitHub'), 'value')
-	maskSecret(token)
-	return token
-}
 
 // The vault admits a run by the claims of its token, never by a stored secret: the Deploy
 // workflow of this repository, on the standing pull request of an organization repository.
@@ -75,7 +52,7 @@ async function readSecret(token: string, name: string): Promise<string> {
 export async function platformCredentials(
 	identity: RunIdentity,
 ): Promise<PlatformCredentials> {
-	const token = await login(await runToken(identity))
+	const token = await login(await identityToken(identity, VAULT.audience))
 	const [cloudflareToken, cloudflareAccount, statePassphrase] =
 		await Promise.all([
 			readSecret(token, PLATFORM_SECRETS.cloudflareToken),

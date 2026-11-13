@@ -25,7 +25,7 @@ import {
 import { migratedDatabases, releaseConfig } from '../domain/wrangler-config.ts'
 
 import type { Account } from '../adapters/cloudflare.ts'
-import type { RunIdentity } from '../adapters/vault.ts'
+import type { RunIdentity } from '../adapters/run-identity.ts'
 import type { Uploaded } from '../adapters/wrangler.ts'
 import type { WorkerDeclaration } from '../domain/declaration.ts'
 import type { Fact, Released } from '../domain/deploy-summary.ts'

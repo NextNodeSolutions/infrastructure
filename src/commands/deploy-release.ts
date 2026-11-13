@@ -11,6 +11,7 @@ import {
 import { writeSummary } from '../adapters/github.ts'
 import { programRoot } from '../adapters/program-directory.ts'
 import { installDependencies } from '../adapters/program-install.ts'
+import { takeRunIdentity } from '../adapters/run-identity.ts'
 import { parseToml } from '../adapters/toml.ts'
 import { short } from '../domain/deploy-selection.ts'
 import { renderFailure, renderReleased } from '../domain/deploy-summary.ts'
@@ -37,10 +38,7 @@ const ARTIFACT_DIRECTORY = 'ARTIFACT'
 export async function deployRelease(): Promise<void> {
 	const workspace = requiredVariable('GITHUB_WORKSPACE')
 	const token = takeVariable('GITHUB_TOKEN')
-	const identity = {
-		url: takeVariable('ACTIONS_ID_TOKEN_REQUEST_URL'),
-		token: takeVariable('ACTIONS_ID_TOKEN_REQUEST_TOKEN'),
-	}
+	const identity = takeRunIdentity()
 	const event = readPullRequestEvent()
 	refuseUnlessStanding(event)
 	const requested = decodeDeployEntry(

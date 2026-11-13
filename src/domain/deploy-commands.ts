@@ -109,10 +109,35 @@ export function printPackedManifest(tarball: string): Command {
 	return { program: 'tar', args: ['-xzOf', tarball, 'package/package.json'] }
 }
 
-// The tarball's own lifecycle scripts stay off: the release job runs nothing of the project.
-export function publish(tarball: string, access: PackageAccess): Command {
+export type Publishing = {
+	readonly name: string
+	readonly access: PackageAccess
+	readonly registry: string
+	readonly configuration: string
+}
+
+function scopeRegistry(name: string, registry: string): readonly string[] {
+	if (!name.startsWith('@')) return []
+	return [`--${name.slice(0, name.indexOf('/'))}:registry=${registry}`]
+}
+
+// The tarball's own lifecycle scripts stay off: the release job runs nothing of the
+// project. The registry is named on the command line, for the package's scope too: a
+// setting the tarball carries replaces no setting the command line names.
+export function publish(tarball: string, publishing: Publishing): Command {
+	const { registry } = publishing
 	return {
 		program: 'npm',
-		args: ['publish', tarball, '--access', access, '--ignore-scripts'],
+		args: [
+			'publish',
+			tarball,
+			'--access',
+			publishing.access,
+			'--ignore-scripts',
+			'--userconfig',
+			publishing.configuration,
+			`--registry=${registry}`,
+			...scopeRegistry(publishing.name, registry),
+		],
 	}
 }

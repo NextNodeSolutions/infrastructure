@@ -1,18 +1,19 @@
 import { join } from 'node:path'
 
-import { packedTarball } from '../adapters/artifact-files.ts'
+import { packedTarball, scratchDirectory } from '../adapters/artifact-files.ts'
 import { inGroup } from '../adapters/github.ts'
 import {
 	hasVersion,
 	packedManifest,
-	publishEnvironment,
+	preparePublisher,
+	publishToken,
 } from '../adapters/npm.ts'
 import { stream } from '../adapters/processes.ts'
 import { until } from '../adapters/wait.ts'
 import { ARTIFACT } from '../domain/artifact.ts'
 import { publish } from '../domain/deploy-commands.ts'
 import { short } from '../domain/deploy-selection.ts'
-import { NPM_PACKAGE_PAGE } from '../domain/platform.ts'
+import { NPM_PACKAGE_PAGE, NPM_REGISTRY } from '../domain/platform.ts'
 import { publishedAs } from '../domain/subject.ts'
 
 import type { PackageDeclaration } from '../domain/declaration.ts'
@@ -45,12 +46,22 @@ export async function releasePackage(
 ): Promise<Released> {
 	const published = publishedAs(subject)
 	const tarball = packedTarball(join(context.artifact, ARTIFACT.package))
-	await refuseForeignTarball(tarball, published, context.artifact)
+	const scratch = scratchDirectory('npm')
+	await refuseForeignTarball(tarball, published, scratch)
+	const publisher = preparePublisher(
+		scratch,
+		await publishToken(context.identity, published.name),
+	)
 	await inGroup('Publish the package', () =>
 		stream(
-			publish(tarball, declaration.access),
-			context.artifact,
-			publishEnvironment(context.identity),
+			publish(tarball, {
+				name: published.name,
+				access: declaration.access,
+				registry: NPM_REGISTRY,
+				configuration: publisher.configuration,
+			}),
+			publisher.directory,
+			publisher.environment,
 		),
 	)
 	const listed = await until(
