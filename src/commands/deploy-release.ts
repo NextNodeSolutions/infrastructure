@@ -6,6 +6,8 @@ import { readPullRequestEvent } from '../adapters/event.ts'
 import { gitHub, readFileAt } from '../adapters/github-api.ts'
 import {
 	createDeployment,
+	deployedRelation,
+	lastDeployedCommit,
 	reportDeployment,
 } from '../adapters/github-deployments.ts'
 import { writeSummary } from '../adapters/github.ts'
@@ -65,6 +67,7 @@ export async function deployRelease(): Promise<void> {
 		commit: event.headSha,
 	}
 	const { declaration } = subject
+	await refuseStale(api, { name, commit: event.headSha })
 	await recorded(api, { name, commit: event.headSha }, () =>
 		declaration.kind === 'package'
 			? releasePackage(subject, declaration, context)
@@ -95,6 +98,21 @@ type Recorded = {
 }
 
 type Outcome = Pick<DeploymentStatus, 'state' | 'description' | 'url'>
+
+// A run that is started again releases the commit it was started for. When a later run
+// deployed a newer one meanwhile, the old run gives way, and records nothing: what
+// serves is still the last success.
+async function refuseStale(
+	api: GitHub,
+	{ name, commit }: Recorded,
+): Promise<void> {
+	const deployed = await lastDeployedCommit(api, name)
+	const relation = deployed && (await deployedRelation(api, deployed, commit))
+	if (!deployed || relation !== 'newer') return
+	throw new Error(
+		`${name} already serves the newer commit ${short(deployed)}: this run holds ${short(commit)} and deploys nothing over it`,
+	)
+}
 
 function runUrl(): string {
 	return `${requiredVariable('GITHUB_SERVER_URL')}/${requiredVariable('GITHUB_REPOSITORY')}/actions/runs/${requiredVariable('GITHUB_RUN_ID')}`

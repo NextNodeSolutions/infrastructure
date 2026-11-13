@@ -1,9 +1,10 @@
 import { decoder } from '../domain/decode.ts'
 
 import { refusedBy } from './github-api.ts'
-import { isSuccess } from './http.ts'
+import { isSuccess, NOT_FOUND } from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
+import type { Relation } from './git.ts'
 import type { GitHub } from './github-api.ts'
 import type { Reply } from './http.ts'
 
@@ -12,6 +13,15 @@ import type { Reply } from './http.ts'
 const HISTORY_DEPTH = 10
 // GitHub's limit for the description of a deployment status.
 const LONGEST_DESCRIPTION = 140
+
+// How GitHub places the commit of a release against a deployed one, read as where the
+// deployed one stands.
+const RELATIONS: Readonly<Record<string, Relation>> = {
+	identical: 'same',
+	ahead: 'older',
+	behind: 'newer',
+	diverged: 'unrelated',
+}
 
 const decode = decoder(message => new Error(`GitHub deployments: ${message}`))
 
@@ -54,6 +64,34 @@ export async function lastDeployedCommit(
 		`list the deployments of ${environment}`,
 	)
 	return firstSuccess(api, deployments)
+}
+
+// Where a deployed commit stands against the one a release holds, asked of GitHub: the
+// release job has no checkout to ask git. A commit the repository no longer holds is
+// unrelated.
+export async function deployedRelation(
+	api: GitHub,
+	deployed: string,
+	commit: string,
+): Promise<Relation> {
+	const reply = await api.get(
+		`/compare/${encodeURIComponent(deployed)}...${encodeURIComponent(commit)}?per_page=1`,
+	)
+	if (reply.status === NOT_FOUND) return 'unrelated'
+	if (!isSuccess(reply))
+		throw refusedBy(reply, `compare ${deployed} with ${commit}`)
+	const parsed: unknown = JSON.parse(reply.text)
+	const status = decode.string(
+		decode.record(parsed, 'the comparison'),
+		'status',
+	)
+	const relation = RELATIONS[status]
+	if (!relation) {
+		throw new Error(
+			`GitHub deployments: the comparison answered an unknown status ${status}`,
+		)
+	}
+	return relation
 }
 
 export type DeploymentRecord = {
