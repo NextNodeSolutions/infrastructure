@@ -3,10 +3,15 @@
 // request's head, and GitHub then starts the workflow on it.
 export const DEPLOYMENTS_BRANCH = 'deployments'
 
+export const VISIBILITIES = ['public', 'private', 'internal'] as const
+
+export type Visibility = (typeof VISIBILITIES)[number]
+
 export type PullRequestEvent = {
 	readonly owner: string
 	readonly repository: string
 	readonly repositoryId: string
+	readonly visibility: Visibility
 	readonly defaultBranch: string
 	readonly baseRef: string
 	readonly headRef: string

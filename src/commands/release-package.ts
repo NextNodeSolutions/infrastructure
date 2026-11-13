@@ -10,6 +10,7 @@ import {
 	publishToken,
 } from '../adapters/npm.ts'
 import { stream } from '../adapters/processes.ts'
+import { signProvenance } from '../adapters/provenance.ts'
 import { until } from '../adapters/wait.ts'
 import { ARTIFACT } from '../domain/artifact.ts'
 import { publish } from '../domain/deploy-commands.ts'
@@ -17,8 +18,10 @@ import { short } from '../domain/deploy-selection.ts'
 import { distTagFor } from '../domain/dist-tag.ts'
 import { manifestFile } from '../domain/manifest.ts'
 import { NPM_PACKAGE_PAGE, NPM_REGISTRY } from '../domain/platform.ts'
+import { hasProvenance } from '../domain/provenance.ts'
 import { publishedAs } from '../domain/subject.ts'
 
+import type { Provenance } from '../adapters/provenance.ts'
 import type { PackageDeclaration } from '../domain/declaration.ts'
 import type { Released } from '../domain/deploy-summary.ts'
 import type { PublishedAs, Subject } from '../domain/subject.ts'
@@ -57,6 +60,23 @@ async function listing(
 	return published
 }
 
+async function signed(
+	tarball: string,
+	published: PublishedAs,
+	context: ReleaseContext,
+	scratch: string,
+): Promise<Provenance | undefined> {
+	if (!hasProvenance(context.visibility)) return undefined
+	return inGroup('Sign the provenance', () =>
+		signProvenance(tarball, published, context.identity, scratch),
+	)
+}
+
+function provenanceFact(provenance: Provenance | undefined): string {
+	if (!provenance) return 'none: the repository is not public'
+	return `signed, ${provenance.logEntry}`
+}
+
 export async function releasePackage(
 	subject: Subject,
 	declaration: PackageDeclaration,
@@ -74,6 +94,7 @@ export async function releasePackage(
 		scratch,
 		await publishToken(context.identity, published.name),
 	)
+	const provenance = await signed(tarball, published, context, scratch)
 	await inGroup('Publish the package', () =>
 		stream(
 			publish(tarball, {
@@ -82,6 +103,7 @@ export async function releasePackage(
 				tag,
 				registry: NPM_REGISTRY,
 				configuration: publisher.configuration,
+				provenance: provenance?.file,
 			}),
 			publisher.directory,
 			publisher.environment,
@@ -101,6 +123,7 @@ export async function releasePackage(
 			['Tag', `\`${tag}\``],
 			['Commit', `\`${short(context.commit)}\``],
 			['Registry', visibility],
+			['Provenance', provenanceFact(provenance)],
 		],
 	}
 }

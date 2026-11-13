@@ -145,17 +145,24 @@ A deployment is done when what was deployed answers. Any answer below a client e
 sequenceDiagram
     autonumber
     participant R as Release job
+    participant S as Sigstore
     participant N as npm registry
     R->>R: read the name and version the tarball carries
     Note over R,N: refused unless they are the name and version the commit declares
     R->>N: trade a token that names the run for a token of this one package
-    R->>N: publish the tarball, its lifecycle scripts off
+    opt the repository is public
+        R->>S: trade a token that names the run for a certificate, sign the provenance
+        S-->>R: the signature, recorded in the public transparency log
+    end
+    R->>N: publish the tarball with its signed provenance, its lifecycle scripts off
     loop until the version is listed or time runs out
         R->>N: ask for the version
     end
 ```
 
 The registry stores no token for the platform and the vault holds none. Each package names its repository and the `Deploy` workflow as its trusted publisher, and the registry trades the run's identity for a token that publishes that package alone for a few minutes. A package release never logs in to the vault.
+
+A package from a public repository is published with provenance: a statement signed for this run that names the repository, the commit and the workflow behind the tarball. The program signs it and hands npm the signed file, so npm never holds a token that names the run. A package from a private or internal repository is published without provenance, because the transparency log is public and would carry the repository's name, and because the registry admits provenance from a public repository only. The release summary says which.
 
 ### The states of a deployment
 
@@ -194,6 +201,8 @@ Every failed state leaves the baseline where it was. Merging a fix, or re-runnin
 | A migration fails                                                    | The migrations applied before it stay applied. The previous code serves on that database.               | Merge a fixed migration.                                           |
 | The upload fails                                                     | The migrations are applied. The previous version serves.                                                | Re-run the failed jobs.                                            |
 | The health path does not answer                                      | The new version serves and is recorded as failed. Nothing rolls back by itself.                         | Merge a fix, or roll back to the previous version in Cloudflare.   |
+| Sigstore does not sign the provenance                                | Nothing is published.                                                                                   | Re-run the failed jobs.                                            |
+| The registry refuses the provenance                                  | Nothing is published.                                                                                   | Make the package's `repository` field name the repository.         |
 | The registry trusts no publication from the run                      | Nothing is published.                                                                                   | Set the package's trusted publisher, as the message says.          |
 | The registry accepts the version and does not list it in time        | The deployment succeeded and the summary says the version is not listed yet.                            | Nothing.                                                           |
 
@@ -201,7 +210,7 @@ Migrations are applied before the code that needs them, so a migration must also
 
 ### What a run says
 
-Each job writes a summary. Discover lists every deployable with whether it deploys and why, and names the revision of the program that decided. A release that succeeded gives the address, the commit, the version and what answered the health path, or the package and its page. A release that failed gives the cause and the next action. GitHub's environment of each deployable shows what serves, with a link to the address and to the run.
+Each job writes a summary. Discover lists every deployable with whether it deploys and why, and names the revision of the program that decided. A release that succeeded gives the address, the commit, the version and what answered the health path, or the package, its page and its provenance. A release that failed gives the cause and the next action. GitHub's environment of each deployable shows what serves, with a link to the address and to the run.
 
 ## Setting up a repository
 
@@ -209,7 +218,7 @@ Each job writes a summary. Discover lists every deployable with whether it deplo
 2. An organization administrator adds the repository to the include list of the ruleset that requires `Deploy plan` on pull requests and of the ruleset that requires `Deploy` on `deployments` and locks that branch. A repository that only publishes packages needs both as well: a publication is a release.
 3. The next pull request into the default branch that a person opens creates `deployments` and the standing pull request. Its first run waits for one approval.
 4. A repository that deploys a Worker has a default branch named `main` and the token subject format with immutable ids, which GitHub gives every repository created recently and which an older one opts into in its settings. The vault admits on both.
-5. A package exists on the registry before its first release, since the registry attaches a trusted publisher to an existing package. An owner of the scope publishes it once by hand, then names the repository and the workflow file `deploy.yml` as its trusted publisher, with direct publishing allowed. The package's `repository` field names the repository.
+5. A package exists on the registry before its first release, since the registry attaches a trusted publisher to an existing package. An owner of the scope publishes it once by hand, then names the repository and the workflow file `deploy.yml` as its trusted publisher, with direct publishing allowed. The package's `repository` field names the repository, which the registry checks against the provenance.
 
 Nothing else is created by hand. The first release creates the Worker, its hostname, its databases and buckets and its GitHub environment.
 
@@ -223,15 +232,16 @@ The boundary stands between a repository and the platform, and so between one re
 
 What the trusted side holds:
 
-| Credential                                                      | Held by                          | Lives               | Reaches                                                       |
-| --------------------------------------------------------------- | -------------------------------- | ------------------- | ------------------------------------------------------------- |
-| A repository token that only reads                              | Plan, Discover, Build            | The job             | Repository content, deployment records and release-run proofs |
-| A repository token that writes branches and pull requests       | Open the standing pull request   | The job             | The repository                                                |
-| A repository token that records deployments                     | Release                          | The job             | The repository's deployment records                           |
-| The run's identity, which asks GitHub for tokens naming the run | Release, inside the program only | The job             | Any service that admits this run                              |
-| The vault's access token                                        | Release of a Worker              | Minutes             | The platform's secrets, read only                             |
-| The Cloudflare token and the state passphrase                   | Release of a Worker              | Stored in the vault | The whole Cloudflare account, and every project's state       |
-| A registry token                                                | Release of a package             | Minutes             | One package                                                   |
+| Credential                                                      | Held by                                              | Lives               | Reaches                                                       |
+| --------------------------------------------------------------- | ---------------------------------------------------- | ------------------- | ------------------------------------------------------------- |
+| A repository token that only reads                              | Plan, Discover, Build                                | The job             | Repository content, deployment records and release-run proofs |
+| A repository token that writes branches and pull requests       | Open the standing pull request                       | The job             | The repository                                                |
+| A repository token that records deployments                     | Release                                              | The job             | The repository's deployment records                           |
+| The run's identity, which asks GitHub for tokens naming the run | Release, inside the program only                     | The job             | Any service that admits this run                              |
+| The vault's access token                                        | Release of a Worker                                  | Minutes             | The platform's secrets, read only                             |
+| The Cloudflare token and the state passphrase                   | Release of a Worker                                  | Stored in the vault | The whole Cloudflare account, and every project's state       |
+| A registry token                                                | Release of a package                                 | Minutes             | One package                                                   |
+| A signing certificate for the run, with its key                 | Release of a public package, inside the program only | Minutes             | A signature that names this run                               |
 
 The Cloudflare token reaches the whole account, so the program is what confines a project to its own resources:
 
@@ -252,17 +262,17 @@ What crosses from the project into the Release job, and how it is taken:
 
 How each channel to a credential is closed:
 
-| Channel                        | Closed by                                                                                                                                                                                                                                                                                                                 |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The project's own processes    | None runs in a job that holds something that writes. That closes the environment, the process tree, sourced files and privilege at once.                                                                                                                                                                                  |
-| The environment of a tool      | The program reads each token once and removes it from its own environment. Wrangler and npm start with the variables the program names and no other. Pulumi's SDK hands its CLI the job's remaining variables beside the ones the program names, and none of them is a token by then. The run's identity reaches no tool. |
-| Configuration a tool reads     | Wrangler and npm run in a directory the program made, on a configuration the program wrote and names explicitly. A packed manifest carrying `publishConfig` is refused before any registry token is requested.                                                                                                            |
-| What a tool spawns             | Wrangler uploads a finished bundle and runs no build command. npm publishes with lifecycle scripts off. Pulumi runs a program the platform wrote.                                                                                                                                                                         |
-| The program's own dependencies | Installed from the program's lockfile, by the pnpm its manifest pins, with lifecycle scripts off, after the program left the project tree. The Pulumi CLI is downloaded at the version the program pins and installed only when its archive matches the pinned digest. The Release job restores no cache.                 |
-| Shared places                  | The Release job starts on a fresh runner. The only thing of the project on its disk is the downloaded files, and the program works in directories it creates.                                                                                                                                                             |
-| Shell evaluation               | Every value travels as JSON that a decoder reads or as an element of an argument array. No `run` line names a project value.                                                                                                                                                                                              |
-| Output                         | Every credential is masked before use and none is printed.                                                                                                                                                                                                                                                                |
-| Network                        | Outside the perimeter. The jobs that run the project reach the network and hold nothing worth sending.                                                                                                                                                                                                                    |
+| Channel                        | Closed by                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The project's own processes    | None runs in a job that holds something that writes. That closes the environment, the process tree, sourced files and privilege at once.                                                                                                                                                                                                                                  |
+| The environment of a tool      | The program reads each token once and removes it from its own environment. Wrangler and npm start with the variables the program names and no other. Pulumi's SDK hands its CLI the job's remaining variables beside the ones the program names, and none of them is a token by then. The run's identity reaches no tool, and npm receives the provenance already signed. |
+| Configuration a tool reads     | Wrangler and npm run in a directory the program made, on a configuration the program wrote and names explicitly. A packed manifest carrying `publishConfig` is refused before any registry token is requested.                                                                                                                                                            |
+| What a tool spawns             | Wrangler uploads a finished bundle and runs no build command. npm publishes with lifecycle scripts off. Pulumi runs a program the platform wrote.                                                                                                                                                                                                                         |
+| The program's own dependencies | Installed from the program's lockfile, by the pnpm its manifest pins, with lifecycle scripts off, after the program left the project tree. The Pulumi CLI is downloaded at the version the program pins and installed only when its archive matches the pinned digest. The Release job restores no cache.                                                                 |
+| Shared places                  | The Release job starts on a fresh runner. The only thing of the project on its disk is the downloaded files, and the program works in directories it creates.                                                                                                                                                                                                             |
+| Shell evaluation               | Every value travels as JSON that a decoder reads or as an element of an argument array. No `run` line names a project value.                                                                                                                                                                                                                                              |
+| Output                         | Every credential is masked before use and none is printed.                                                                                                                                                                                                                                                                                                                |
+| Network                        | Outside the perimeter. The jobs that run the project reach the network and hold nothing worth sending.                                                                                                                                                                                                                                                                    |
 
 The vault admits a run by the claims of the token GitHub signs for it, never by a stored secret: the organization, the pull request event, the two branches of the standing pull request, and this repository's `Deploy` workflow file on its default branch as the run's workflow. Every pull request of a repository shares one token subject, so the subject alone would admit too much. The workflow claim is what a project cannot forge, because only a ruleset can make another repository's file the workflow of a run.
 
@@ -278,6 +288,7 @@ A guarantee is checked by an attack that must fail, on the canaries, after any c
 | Competing repositories cannot reserve the same resource | Start concurrent create-only claims for the same name under different owners. Exactly one succeeds and the other refuses without replacing it.   |
 | A tarball cannot configure authenticated npm            | Pack a manifest with `publishConfig` containing proxy and TLS settings. Reading it refuses before requesting a token.                            |
 | The vault admits the Deploy workflow alone              | The single-package canary keeps a workflow of its own that asks for the Deploy login and passes only when the vault refuses.                     |
+| A private repository's name stays out of the public log | Publish from the workspace canary. Its summary gives the provenance as none and its log has no signing step.                                     |
 | An old run deploys nothing over a newer commit          | Re-run the failed or finished Release job of an older run after a newer one succeeded. It refuses and records nothing.                           |
 | A selection reaches only what changed                   | Merge a change to one app of the workspace canary, then to its shared package. The first releases that app, the second its dependents.           |
 | A deployment heals                                      | Close the standing pull request, merge, open a pull request. The warning appears, the standing pull request is reopened, the next merge deploys. |

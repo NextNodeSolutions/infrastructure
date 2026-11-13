@@ -49,6 +49,7 @@ export async function deployRelease(): Promise<void> {
 	const context = {
 		repository: event.repository,
 		repositoryId: event.repositoryId,
+		visibility: event.visibility,
 		root,
 		artifact,
 		identity,

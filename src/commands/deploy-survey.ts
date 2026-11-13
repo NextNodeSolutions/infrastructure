@@ -48,7 +48,7 @@ export async function survey(
 	const checkout = readCheckout(project)
 	const directories = await declaringDirectories(checkout)
 	if (!directories.length) return undefined
-	await installDependencies(programRoot(), 'parsing')
+	await installDependencies(programRoot(), 'plain')
 	const subjects = await Promise.all(
 		directories.map(directory =>
 			readSubject(project, event.repository, directory),

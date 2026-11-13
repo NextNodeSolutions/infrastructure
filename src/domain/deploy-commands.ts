@@ -5,9 +5,10 @@ import type { Command } from './commands.ts'
 import type { Declaration, PackageAccess } from './declaration.ts'
 import type { DeployEntry } from './deployable.ts'
 
-// What a job installs of the program's own dependencies. Reading a nextnode.toml takes
-// the parser alone. Bundling, uploading and converging take the optional ones too.
-export type InstallProfile = 'parsing' | 'deploying'
+// What a job installs of the program's own dependencies. The plain ones are the parser
+// every reader of a nextnode.toml takes and the Sigstore client a package release signs
+// with. Bundling, uploading and converging take the optional ones too.
+export type InstallProfile = 'plain' | 'deploying'
 
 const PROGRAM_INSTALL = [
 	'install',
@@ -17,7 +18,7 @@ const PROGRAM_INSTALL = [
 ] as const
 
 const INSTALL_PROFILES: Record<InstallProfile, Command> = {
-	parsing: pnpm(...PROGRAM_INSTALL, '--no-optional'),
+	plain: pnpm(...PROGRAM_INSTALL, '--no-optional'),
 	deploying: pnpm(...PROGRAM_INSTALL),
 }
 
@@ -29,7 +30,7 @@ export function programInstall(profile: InstallProfile): Command {
 // makes pnpm discard the first and install everything again.
 const PROFILE_OF_KIND: Record<Declaration['kind'], InstallProfile> = {
 	worker: 'deploying',
-	package: 'parsing',
+	package: 'plain',
 }
 
 export function installProfileOf(kind: Declaration['kind']): InstallProfile {
@@ -118,6 +119,7 @@ export type Publishing = {
 	readonly tag: string
 	readonly registry: string
 	readonly configuration: string
+	readonly provenance: string | undefined
 }
 
 function scopeRegistry(name: string, registry: string): readonly string[] {
@@ -127,9 +129,10 @@ function scopeRegistry(name: string, registry: string): readonly string[] {
 
 // The tarball's own lifecycle scripts stay off: the release job runs nothing of the
 // project. The registry is named on the command line, for the package's scope too: a
-// setting the tarball carries replaces no setting the command line names.
+// setting the tarball carries replaces no setting the command line names. A signed
+// provenance is handed over as a file, so npm signs nothing itself.
 export function publish(tarball: string, publishing: Publishing): Command {
-	const { registry } = publishing
+	const { registry, provenance } = publishing
 	return {
 		program: 'npm',
 		args: [
@@ -144,6 +147,7 @@ export function publish(tarball: string, publishing: Publishing): Command {
 			publishing.configuration,
 			`--registry=${registry}`,
 			...scopeRegistry(publishing.name, registry),
+			...(provenance ? ['--provenance-file', provenance] : []),
 		],
 	}
 }

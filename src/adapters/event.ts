@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 
 import { decoder } from '../domain/decode.ts'
+import { VISIBILITIES } from '../domain/occasion.ts'
 
 import { requiredVariable } from './environment.ts'
 
@@ -45,6 +46,12 @@ export function readPullRequestEvent(): PullRequestEvent {
 		owner: decode.string(decode.record(repository.owner, 'owner'), 'login'),
 		repository: decode.string(repository, 'name'),
 		repositoryId: idOf(repository),
+		visibility: decode.oneOf(
+			repository,
+			'visibility',
+			VISIBILITIES,
+			'repository.visibility',
+		),
 		defaultBranch: decode.string(repository, 'default_branch'),
 		baseRef: decode.string(base, 'ref'),
 		headRef: decode.string(head, 'ref'),
