@@ -1,3 +1,5 @@
+import { posix } from 'node:path'
+
 import { capture, succeeds } from './processes.ts'
 
 import type { Since } from '../domain/deploy-selection.ts'
@@ -16,6 +18,21 @@ export async function originUrl(cwd: string): Promise<string> {
 		cwd,
 	)
 	return url.trim()
+}
+
+// Read from git's index alone, so no tool of the project runs.
+export async function directoriesTracking(
+	file: string,
+	cwd: string,
+): Promise<readonly string[]> {
+	const listed = await capture(
+		{ program: 'git', args: ['ls-files', '-z', '--', `:(glob)**/${file}`] },
+		cwd,
+	)
+	return listed
+		.split('\0')
+		.filter(Boolean)
+		.map(path => posix.dirname(path))
 }
 
 function isAncestor(

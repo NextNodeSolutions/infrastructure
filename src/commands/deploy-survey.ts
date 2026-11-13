@@ -2,6 +2,7 @@ import { join } from 'node:path'
 
 import {
 	declaringDirectories,
+	workspaceMembers,
 	readCheckout,
 	readSubject,
 } from '../adapters/checkout.ts'
@@ -46,7 +47,7 @@ export async function survey(
 ): Promise<Survey | undefined> {
 	if (!hasManifest(project)) return undefined
 	const checkout = readCheckout(project)
-	const directories = await declaringDirectories(checkout)
+	const directories = await declaringDirectories(checkout, workspaceMembers)
 	if (!directories.length) return undefined
 	await installDependencies(programRoot(), 'plain')
 	const subjects = await Promise.all(

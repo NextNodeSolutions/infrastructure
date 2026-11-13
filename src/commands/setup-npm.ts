@@ -5,7 +5,7 @@ import {
 	readCheckout,
 	readSubject,
 } from '../adapters/checkout.ts'
-import { originUrl } from '../adapters/git.ts'
+import { directoriesTracking, originUrl } from '../adapters/git.ts'
 import {
 	signedInAs,
 	stagePackage,
@@ -15,6 +15,7 @@ import {
 import { hasVersion, isRegistered } from '../adapters/npm.ts'
 import { isTerminal, say } from '../adapters/terminal.ts'
 import { until } from '../adapters/wait.ts'
+import { NEXTNODE_FILE } from '../domain/declaration.ts'
 import {
 	APPROVAL_HINT,
 	githubRepository,
@@ -35,7 +36,10 @@ async function declaredPackages(
 	project: string,
 	repository: string,
 ): Promise<readonly PublishedAs[]> {
-	const directories = await declaringDirectories(readCheckout(project))
+	const directories = await declaringDirectories(
+		readCheckout(project),
+		checkout => directoriesTracking(NEXTNODE_FILE, checkout.project),
+	)
 	const subjects = await Promise.all(
 		directories.map(directory =>
 			readSubject(project, basename(repository), directory),

@@ -38,12 +38,29 @@ export function readCheckout(project: string): Checkout {
 	}
 }
 
+// Where a workspace's members may declare, as each caller is allowed to find them.
+export type MemberDirectories = (
+	checkout: Checkout,
+) => Promise<readonly string[]>
+
+export async function workspaceMembers(
+	checkout: Checkout,
+): Promise<readonly string[]> {
+	const members = await listWorkspace(
+		checkout.project,
+		checkout.toolchain.pnpmVersion,
+		[],
+	)
+	return members.map(member => member.directory)
+}
+
 // A single package declares at its root. A workspace declares in its members: the root
 // is every member's dependency, so a root declaration would deploy on every change.
 export async function declaringDirectories(
 	checkout: Checkout,
+	members: MemberDirectories,
 ): Promise<readonly string[]> {
-	const { project, executor, toolchain } = checkout
+	const { project, executor } = checkout
 	const hasRootFile = hasFile(join(project, NEXTNODE_FILE))
 	if (executor === 'single') return hasRootFile ? [ROOT_DIRECTORY] : []
 	if (hasRootFile) {
@@ -52,9 +69,8 @@ export async function declaringDirectories(
 			`a workspace declares what it deploys in its packages, one ${NEXTNODE_FILE} beside each package.json, never at the root`,
 		)
 	}
-	const members = await listWorkspace(project, toolchain.pnpmVersion, [])
-	return members
-		.map(member => member.directory)
+	const directories = await members(checkout)
+	return directories
 		.filter(directory => directory !== ROOT_DIRECTORY)
 		.filter(directory => hasFile(join(project, declarationFile(directory))))
 }
