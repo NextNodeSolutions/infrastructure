@@ -1,7 +1,7 @@
 {
   "name": "@nextnode-solutions/infrastructure",
   "version": "0.0.0",
-  "description": "The program behind the Checks workflow: it reads the repository it runs in and runs what that repository declares.",
+  "description": "The program behind the Checks and Deploy workflows: it reads the repository it runs in, then runs and deploys what that repository declares.",
   "scripts": {
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
