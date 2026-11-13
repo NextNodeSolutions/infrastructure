@@ -21,14 +21,14 @@ export const NOTHING_DECLARED =
 export const NOT_A_PROPOSAL =
 	'Nothing to plan: only a pull request into the default branch proposes a deployment.\n'
 
-// The pull request that deployments run on, said on every proposal: when it is missing,
-// merges deploy nothing until it is open again.
+// Nothing runs when a merge lands while the standing pull request is closed, so the
+// first proposal that finds it missing says so where a reviewer looks.
+export const STANDING_MISSING =
+	'The standing pull request is missing, so a merge deploys nothing: this run opens it again. Merges that landed without it are deployed by the next one.'
+
 const STANDING_NOTES: Record<Standing, readonly string[]> = {
 	open: ['The standing pull request is open: a merge deploys.', ''],
-	missing: [
-		'The standing pull request is missing, so a merge would deploy nothing: this run opens it again.',
-		'',
-	],
+	missing: [STANDING_MISSING, ''],
 	'not looked for': [],
 }
 

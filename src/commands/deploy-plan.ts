@@ -2,13 +2,18 @@ import { requiredVariable, takeVariable } from '../adapters/environment.ts'
 import { readPullRequestEvent } from '../adapters/event.ts'
 import { gitHub } from '../adapters/github-api.ts'
 import { hasStandingPullRequest } from '../adapters/github-standing.ts'
-import { writeOutputs, writeSummary } from '../adapters/github.ts'
+import {
+	annotateWarning,
+	writeOutputs,
+	writeSummary,
+} from '../adapters/github.ts'
 import { programRevision } from '../adapters/program-directory.ts'
 import { planOutputs } from '../domain/deploy-outputs.ts'
 import {
 	NOT_A_PROPOSAL,
 	NOTHING_DECLARED,
 	renderProposal,
+	STANDING_MISSING,
 } from '../domain/deploy-summary.ts'
 import { occasionOf, opensStanding } from '../domain/occasion.ts'
 
@@ -42,6 +47,7 @@ export async function deployPlan(): Promise<void> {
 	const surveyed = await survey(project, event, api)
 	if (!surveyed) return nothing(NOTHING_DECLARED)
 	const standing = await standingOf(api, event)
+	if (standing === 'missing') annotateWarning(STANDING_MISSING)
 	writeOutputs(planOutputs(standing))
 	writeSummary(
 		renderProposal(
