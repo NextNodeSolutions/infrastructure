@@ -7,6 +7,7 @@ import type { PullRequestEvent } from '../domain/occasion.ts'
 import type { Reply } from './http.ts'
 
 const API = 'https://api.github.com'
+const PER_PAGE = 100
 const JSON_REPLY = 'application/vnd.github+json'
 const RAW_REPLY = 'application/vnd.github.raw+json'
 
@@ -47,6 +48,30 @@ export function refusedBy(reply: Reply, action: string): Error {
 	return new Error(
 		`GitHub refused to ${action} (HTTP ${reply.status}): ${messageOf(reply)}`,
 	)
+}
+
+export type Listing = {
+	readonly path: string
+	readonly action: string
+	readonly entries: (reply: Reply) => readonly Fields[]
+}
+
+// GitHub hands a long list page by page, and a page shorter than asked for is the last.
+export async function findInPages<Found>(
+	api: GitHub,
+	listing: Listing,
+	find: (entries: readonly Fields[]) => Promise<Found | undefined>,
+	page = 1,
+): Promise<Found | undefined> {
+	const separator = listing.path.includes('?') ? '&' : '?'
+	const reply = await api.get(
+		`${listing.path}${separator}per_page=${PER_PAGE}&page=${page}`,
+	)
+	if (!isSuccess(reply)) throw refusedBy(reply, listing.action)
+	const entries = listing.entries(reply)
+	const found = await find(entries)
+	if (found || entries.length < PER_PAGE) return found
+	return findInPages(api, listing, find, page + 1)
 }
 
 export async function branchCommit(

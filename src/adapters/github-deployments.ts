@@ -1,23 +1,16 @@
 import { decoder } from '../domain/decode.ts'
 
-import { refusedBy } from './github-api.ts'
+import { findInPages, refusedBy } from './github-api.ts'
 import { successfulPipelineDeployment } from './github-release-proof.ts'
 import { fieldsOf, isSuccess, recordsOf } from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
 import type { GitHub } from './github-api.ts'
-import type { Reply } from './http.ts'
 
-const DEPLOYMENTS_PER_PAGE = 100
 // GitHub's limit for the description of a deployment status.
 const LONGEST_DESCRIPTION = 140
 
 const decode = decoder(message => new Error(`GitHub deployments: ${message}`))
-
-function listOf(reply: Reply, action: string): readonly Fields[] {
-	if (!isSuccess(reply)) throw refusedBy(reply, action)
-	return recordsOf(reply, 'GitHub deployments')
-}
 
 function idOf(deployment: Fields): number {
 	if (typeof deployment.id !== 'number')
@@ -50,23 +43,15 @@ export function lastDeployedCommit(
 	api: GitHub,
 	environment: string,
 ): Promise<string | undefined> {
-	return deployedPage(api, environment, 1)
-}
-
-async function deployedPage(
-	api: GitHub,
-	environment: string,
-	page: number,
-): Promise<string | undefined> {
-	const deployments = listOf(
-		await api.get(
-			`/deployments?environment=${encodeURIComponent(environment)}&per_page=${DEPLOYMENTS_PER_PAGE}&page=${page}`,
-		),
-		`list the deployments of ${environment}`,
+	return findInPages(
+		api,
+		{
+			path: `/deployments?environment=${encodeURIComponent(environment)}`,
+			action: `list the deployments of ${environment}`,
+			entries: reply => recordsOf(reply, 'GitHub deployments'),
+		},
+		deployments => firstSuccess(api, deployments, environment),
 	)
-	const commit = await firstSuccess(api, deployments, environment)
-	if (commit || deployments.length < DEPLOYMENTS_PER_PAGE) return commit
-	return deployedPage(api, environment, page + 1)
 }
 
 export type DeploymentRecord = {

@@ -1,13 +1,12 @@
 import { decoder } from '../domain/decode.ts'
 
-import { refusedBy } from './github-api.ts'
+import { findInPages, refusedBy } from './github-api.ts'
 import { fieldsOf, isSuccess, NOT_FOUND, recordsOf } from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
 import type { GitHub } from './github-api.ts'
 
 const DEPLOY_WORKFLOW = '.github/workflows/deploy.yml'
-const JOBS_PER_PAGE = 100
 const RUN_ID = /\/actions\/runs\/(\d+)(?:\/attempts\/\d+)?$/
 const decode = decoder(message => new Error(`GitHub release proof: ${message}`))
 
@@ -21,23 +20,25 @@ async function hasSuccessfulRelease(
 	api: GitHub,
 	run: string,
 	environment: string,
-	page = 1,
 ): Promise<boolean> {
-	const reply = await api.get(
-		`/actions/runs/${run}/jobs?per_page=${JOBS_PER_PAGE}&page=${page}`,
+	const found = await findInPages(
+		api,
+		{
+			path: `/actions/runs/${run}/jobs`,
+			action: 'verify release jobs',
+			entries: reply =>
+				decode.records(fieldsOf(reply, 'release jobs'), 'jobs'),
+		},
+		jobs =>
+			Promise.resolve(
+				jobs.some(
+					job =>
+						job.name === `Release ${environment}` &&
+						job.conclusion === 'success',
+				) || undefined,
+			),
 	)
-	if (!isSuccess(reply)) throw refusedBy(reply, 'verify release jobs')
-	const jobs = decode.records(fieldsOf(reply, 'release jobs'), 'jobs')
-	if (
-		jobs.some(
-			job =>
-				job.name === `Release ${environment}` &&
-				job.conclusion === 'success',
-		)
-	)
-		return true
-	if (jobs.length < JOBS_PER_PAGE) return false
-	return hasSuccessfulRelease(api, run, environment, page + 1)
+	return found === true
 }
 
 async function wasReleasedByPipeline(
@@ -88,14 +89,16 @@ async function hasReleaseProof(
 export async function successfulPipelineDeployment(
 	api: GitHub,
 	record: RecordedRelease,
-	page = 1,
 ): Promise<boolean> {
-	const reply = await api.get(
-		`/deployments/${record.id}/statuses?per_page=${JOBS_PER_PAGE}&page=${page}`,
+	const found = await findInPages(
+		api,
+		{
+			path: `/deployments/${record.id}/statuses`,
+			action: 'read deployment statuses',
+			entries: reply => recordsOf(reply, 'GitHub release proof'),
+		},
+		async statuses =>
+			(await hasReleaseProof(api, record, statuses)) || undefined,
 	)
-	if (!isSuccess(reply)) throw refusedBy(reply, 'read deployment statuses')
-	const statuses = recordsOf(reply, 'GitHub release proof')
-	if (await hasReleaseProof(api, record, statuses)) return true
-	if (statuses.length < JOBS_PER_PAGE) return false
-	return successfulPipelineDeployment(api, record, page + 1)
+	return found === true
 }
