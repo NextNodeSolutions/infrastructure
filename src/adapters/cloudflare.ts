@@ -130,11 +130,11 @@ export async function tagWorker(
 }
 
 function pageCountOf(reply: Reply): number {
-	const info = decode.record(
+	const paging = decode.record(
 		fieldsOf(reply, 'Cloudflare').result_info,
 		'result_info',
 	)
-	const pages = info.total_pages
+	const pages = paging.total_pages
 	if (typeof pages !== 'number')
 		throw new Error('Cloudflare: result_info.total_pages must be a number')
 	return pages
