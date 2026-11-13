@@ -27,13 +27,10 @@ export function planOutputs(standing: Standing): PlanOutputs {
 	return { anchor: standing === 'missing' ? ANCHOR_NEEDED : '' }
 }
 
-function entryFor(deployable: Deployable, executor: Executor): DeployEntry {
-	return { ...deployable, executor }
-}
-
 export function deployOutputs(deploying: Deploying): DeployOutputs {
-	const entries = deploying.deployables.map(deployable =>
-		entryFor(deployable, deploying.executor),
+	const { executor } = deploying
+	const entries: readonly DeployEntry[] = deploying.deployables.map(
+		deployable => ({ ...deployable, executor }),
 	)
 	return {
 		node: String(deploying.toolchain.nodeMajor),
