@@ -1,5 +1,3 @@
-import { ROOT_DIRECTORY } from './directory.ts'
-
 import type { Deployable } from './deployable.ts'
 
 const SHORT_COMMIT = 7
@@ -51,7 +49,6 @@ export function verdictFor(
 	}
 	const isReached =
 		since.changed === 'everything' ||
-		deployable.directory === ROOT_DIRECTORY ||
 		since.changed.includes(deployable.package)
 	return isReached
 		? { deploys: true, reason: `changed since ${at}` }
