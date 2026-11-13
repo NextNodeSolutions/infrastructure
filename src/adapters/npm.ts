@@ -45,7 +45,13 @@ export async function packedManifest(
 ): Promise<Manifest> {
 	const printed = await capture(printPackedManifest(tarball), cwd)
 	const parsed: unknown = JSON.parse(printed)
-	return decodeManifest(parsed, PACKED_MANIFEST)
+	const manifest = decode.record(parsed, PACKED_MANIFEST)
+	if ('publishConfig' in manifest) {
+		throw new Error(
+			`${PACKED_MANIFEST} must not contain publishConfig: remove it, because the platform supplies all publishing configuration`,
+		)
+	}
+	return decodeManifest(manifest, PACKED_MANIFEST)
 }
 
 // The registry stores no token for the platform: it trades a token that names the run
