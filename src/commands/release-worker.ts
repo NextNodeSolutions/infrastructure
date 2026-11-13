@@ -144,12 +144,12 @@ async function uploadRelease(
 		applyMigrations(wrangler.program, wrangler.config, database),
 	)
 	await inGroup('Apply the migrations', () =>
-		runInOrder(migrations, context.artifact, wrangler.environment),
+		runInOrder(migrations, wrangler.directory, wrangler.environment),
 	)
 	await inGroup('Upload the Worker', () =>
 		stream(
 			upload(wrangler.program, wrangler.config, short(context.commit)),
-			context.artifact,
+			wrangler.directory,
 			wrangler.environment,
 		),
 	)

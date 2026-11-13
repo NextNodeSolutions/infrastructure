@@ -15,9 +15,10 @@ const INHERITED = ['PATH', 'HOME']
 const DEPLOY_ENTRY = 'deploy'
 
 // One run of Wrangler: the binary the program installed, a configuration the platform
-// wrote, and the variables it is started with.
+// wrote, the directory that holds it and the variables it is started with.
 export type Wrangler = {
 	readonly program: string
+	readonly directory: string
 	readonly config: string
 	readonly output: string
 	readonly environment: ToolEnvironment
@@ -55,6 +56,7 @@ export function prepareWrangler(
 	writeFileSync(configPath, JSON.stringify(config))
 	return {
 		program: join(programRoot, 'node_modules', '.bin', 'wrangler'),
+		directory: scratch,
 		config: configPath,
 		output,
 		environment: {
