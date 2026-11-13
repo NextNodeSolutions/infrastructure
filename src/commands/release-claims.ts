@@ -13,7 +13,6 @@ import {
 	refuseForeignWorker,
 	withOwner,
 } from '../domain/ownership.ts'
-import { resourcePlan } from '../domain/resources.ts'
 
 import type { Account, StateBackend } from '../adapters/cloudflare.ts'
 import type { WorkerDeclaration } from '../domain/declaration.ts'
@@ -25,6 +24,7 @@ export type Claim = {
 	readonly repositoryId: string
 	readonly deployable: Deployable
 	readonly declaration: WorkerDeclaration
+	readonly plan: ResourcePlan
 }
 
 async function ownedTags(
@@ -60,7 +60,6 @@ async function refuseTaken(
 type ClaimedWorker = {
 	readonly tags: readonly string[]
 	readonly backend: StateBackend
-	readonly plan: ResourcePlan
 }
 
 export async function claimWorker(
@@ -69,8 +68,7 @@ export async function claimWorker(
 ): Promise<ClaimedWorker> {
 	const tags = await ownedTags(account, claim)
 	await refuseTaken(account, claim)
-	const { deployable, declaration } = claim
-	const plan = resourcePlan(deployable, declaration)
+	const { deployable, declaration, plan } = claim
 	const backend = await stateBackend(account)
 	await reserveOwnership(
 		backend,
@@ -81,5 +79,5 @@ export async function claimWorker(
 			plan,
 		}),
 	)
-	return { tags, backend, plan }
+	return { tags, backend }
 }

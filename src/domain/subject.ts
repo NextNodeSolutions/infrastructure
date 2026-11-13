@@ -2,15 +2,18 @@ import { declarationFile, deployableFor } from './deployable.ts'
 import { decodeManifest, manifestFile } from './manifest.ts'
 import { decodeNextnodeToml } from './nextnode-toml.ts'
 import { Refusal } from './refusal.ts'
+import { NO_RESOURCES, resourcePlan } from './resources.ts'
 
 import type { Declaration } from './declaration.ts'
 import type { Deployable } from './deployable.ts'
 import type { Manifest } from './manifest.ts'
+import type { ResourcePlan } from './resources.ts'
 
 export type Subject = {
 	readonly deployable: Deployable
 	readonly declaration: Declaration
 	readonly manifest: Manifest
+	readonly resources: ResourcePlan
 }
 
 export type Sources = {
@@ -36,10 +39,15 @@ export function subjectOf(
 		declarationFile(directory),
 	)
 	const placement = { repository, directory, package: manifest.name ?? '' }
+	const deployable = deployableFor(placement, declaration.kind)
 	return {
-		deployable: deployableFor(placement, declaration.kind),
+		deployable,
 		declaration,
 		manifest,
+		resources:
+			declaration.kind === 'worker'
+				? resourcePlan(deployable, declaration)
+				: NO_RESOURCES,
 	}
 }
 

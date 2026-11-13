@@ -37,15 +37,16 @@ export async function releaseWorker(
 	declaration: WorkerDeclaration,
 	context: ReleaseContext,
 ): Promise<Released> {
-	const { deployable } = subject
+	const { deployable, resources: plan } = subject
 	await installDependencies(context.root, 'deploying')
 	const credentials = await platformCredentials(context.identity)
 	const account = accountOf(credentials)
-	const { tags, plan, backend } = await claimWorker(account, {
+	const { tags, backend } = await claimWorker(account, {
 		repository: context.repository,
 		repositoryId: context.repositoryId,
 		deployable,
 		declaration,
+		plan,
 	})
 	const provisioned = await provision(
 		{ project: context.repository, stack: deployable.name, backend },

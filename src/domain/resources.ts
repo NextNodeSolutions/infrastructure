@@ -21,6 +21,8 @@ export type Provisioned = {
 	readonly databaseIds: Readonly<Record<string, string>>
 }
 
+export const NO_RESOURCES: ResourcePlan = { databases: [], buckets: [] }
+
 export const NOTHING_PROVISIONED: Provisioned = { databaseIds: {} }
 
 const LONGEST_NAME = 63
