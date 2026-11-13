@@ -30,6 +30,7 @@ import {
 	stagedWorker,
 } from '../domain/deploy-summary.ts'
 import { declarationFile } from '../domain/deployable.ts'
+import { causeOf } from '../domain/refusal.ts'
 import { bundlingConfig } from '../domain/wrangler-config.ts'
 
 import { artifactDirectory, requestedDeployable } from './deploy-job.ts'
@@ -53,9 +54,7 @@ export async function deployBuild(): Promise<void> {
 	try {
 		writeSummary(renderBuilt(entry.name, await buildAndStage(entry)))
 	} catch (failure: unknown) {
-		const cause =
-			failure instanceof Error ? failure.message : String(failure)
-		writeSummary(renderBuildFailure(entry.name, cause))
+		writeSummary(renderBuildFailure(entry.name, causeOf(failure)))
 		throw failure
 	}
 }

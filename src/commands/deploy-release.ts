@@ -14,6 +14,7 @@ import { installProfileOf } from '../domain/deploy-commands.ts'
 import { short } from '../domain/deploy-selection.ts'
 import { renderFailure, renderReleased } from '../domain/deploy-summary.ts'
 import { refuseUnlessStanding } from '../domain/occasion.ts'
+import { causeOf } from '../domain/refusal.ts'
 
 import { artifactDirectory, requestedDeployable } from './deploy-job.ts'
 import { releasePackage } from './release-package.ts'
@@ -116,8 +117,7 @@ async function recorded(
 		})
 		writeSummary(renderReleased(released))
 	} catch (failure: unknown) {
-		const cause =
-			failure instanceof Error ? failure.message : String(failure)
+		const cause = causeOf(failure)
 		await report({ state: 'failure', description: cause, url: undefined })
 		writeSummary(renderFailure(name, cause))
 		throw failure

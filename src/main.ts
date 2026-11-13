@@ -7,7 +7,7 @@ import { deployDiscover } from './commands/deploy-discover.ts'
 import { deployPlan } from './commands/deploy-plan.ts'
 import { deployRelease } from './commands/deploy-release.ts'
 import { discover } from './commands/discover.ts'
-import { Refusal } from './domain/refusal.ts'
+import { causeOf, Refusal } from './domain/refusal.ts'
 
 const COMMANDS: Record<string, () => Promise<void>> = {
 	discover,
@@ -27,7 +27,7 @@ function report(failure: unknown): void {
 		annotateError(failure.message, failure.file)
 		return
 	}
-	annotateError(failure instanceof Error ? failure.message : String(failure))
+	annotateError(causeOf(failure))
 }
 
 async function main(name: string | undefined): Promise<number> {

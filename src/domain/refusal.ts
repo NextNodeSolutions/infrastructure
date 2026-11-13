@@ -8,6 +8,10 @@ export class Refusal extends Error {
 	}
 }
 
+export function causeOf(failure: unknown): string {
+	return failure instanceof Error ? failure.message : String(failure)
+}
+
 export function refusal(file: string, reason: string): Refusal {
 	return new Refusal(file, `${file}: ${reason}`)
 }
