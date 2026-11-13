@@ -9,7 +9,14 @@ import { Refusal } from '../domain/refusal.ts'
 
 import { toolEnvironment } from './environment.ts'
 import { maskSecret } from './github.ts'
-import { fieldsOf, isSuccess, messageOf, NOT_FOUND, send } from './http.ts'
+import {
+	fieldsOf,
+	isSuccess,
+	messageOf,
+	NOT_FOUND,
+	send,
+	UNAUTHORIZED,
+} from './http.ts'
 import { capture } from './processes.ts'
 import { identityToken } from './run-identity.ts'
 
@@ -93,6 +100,26 @@ export function preparePublisher(scratch: string, token: string): Publisher {
 		configuration,
 		environment: toolEnvironment({ [TOKEN_VARIABLE]: token }),
 	}
+}
+
+// The version `latest` names, asked without a credential. The registry answers a scoped
+// name it shows nothing of with 401 and an unscoped one with 404.
+export async function latestVersion(name: string): Promise<string | undefined> {
+	const reply = await send({
+		method: 'GET',
+		url: `${NPM_REGISTRY}/-/package/${registryPath(name)}/dist-tags`,
+		headers: { accept: 'application/json' },
+	})
+	if (reply.status === NOT_FOUND || reply.status === UNAUTHORIZED)
+		return undefined
+	if (!isSuccess(reply)) {
+		throw new Error(
+			`The npm registry did not say which version of ${name} is latest (HTTP ${reply.status})`,
+		)
+	}
+	const { latest } = fieldsOf(reply, 'The npm registry')
+	if (typeof latest !== 'string') return undefined
+	return latest
 }
 
 // Asked without a credential: a restricted package answers as if it had no version, so

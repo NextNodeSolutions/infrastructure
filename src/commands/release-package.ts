@@ -4,6 +4,7 @@ import { packedTarball, scratchDirectory } from '../adapters/artifact-files.ts'
 import { inGroup } from '../adapters/github.ts'
 import {
 	hasVersion,
+	latestVersion,
 	packedManifest,
 	preparePublisher,
 	publishToken,
@@ -13,6 +14,7 @@ import { until } from '../adapters/wait.ts'
 import { ARTIFACT } from '../domain/artifact.ts'
 import { publish } from '../domain/deploy-commands.ts'
 import { short } from '../domain/deploy-selection.ts'
+import { distTagFor } from '../domain/dist-tag.ts'
 import { manifestFile } from '../domain/manifest.ts'
 import { NPM_PACKAGE_PAGE, NPM_REGISTRY } from '../domain/platform.ts'
 import { publishedAs } from '../domain/subject.ts'
@@ -64,6 +66,10 @@ export async function releasePackage(
 	const tarball = packedTarball(join(context.artifact, ARTIFACT.package))
 	const scratch = scratchDirectory('npm')
 	await refuseForeignTarball(tarball, subject, scratch)
+	const tag = distTagFor(
+		published.version,
+		await latestVersion(published.name),
+	)
 	const publisher = preparePublisher(
 		scratch,
 		await publishToken(context.identity, published.name),
@@ -73,6 +79,7 @@ export async function releasePackage(
 			publish(tarball, {
 				name: published.name,
 				access: declaration.access,
+				tag,
 				registry: NPM_REGISTRY,
 				configuration: publisher.configuration,
 			}),
@@ -92,6 +99,7 @@ export async function releasePackage(
 		facts: [
 			['Package', `\`${published.name}@${published.version}\``],
 			['Page', url],
+			['Tag', `\`${tag}\``],
 			['Commit', `\`${short(context.commit)}\``],
 			['Registry', visibility],
 		],

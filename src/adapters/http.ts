@@ -21,6 +21,7 @@ const FIRST_SUCCESS = 200
 const FIRST_REDIRECT = 300
 const JSON_CONTENT = { 'content-type': 'application/json' }
 
+export const UNAUTHORIZED = 401
 export const NOT_FOUND = 404
 
 function contentOf({ headers, body }: Request): Content {

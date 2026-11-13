@@ -115,6 +115,7 @@ export function printPackedManifest(tarball: string): Command {
 export type Publishing = {
 	readonly name: string
 	readonly access: PackageAccess
+	readonly tag: string
 	readonly registry: string
 	readonly configuration: string
 }
@@ -136,6 +137,8 @@ export function publish(tarball: string, publishing: Publishing): Command {
 			tarball,
 			'--access',
 			publishing.access,
+			'--tag',
+			publishing.tag,
 			'--ignore-scripts',
 			'--userconfig',
 			publishing.configuration,
