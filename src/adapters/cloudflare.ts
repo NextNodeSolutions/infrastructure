@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 import { STATE_BUCKET } from '../domain/platform.ts'
 
-import { ask, decode, refused, resultsOf } from './cloudflare-api.ts'
+import { ask, decode, refused, resultOf, resultsOf } from './cloudflare-api.ts'
 import { hasBucket } from './cloudflare-stores.ts'
 import { maskSecret } from './github.ts'
 import { fieldsOf, isSuccess, NOT_FOUND } from './http.ts'
@@ -56,9 +56,9 @@ export async function workerTags(
 ): Promise<readonly string[] | undefined> {
 	const reply = await ask(account, 'GET', settingsOf(account, worker))
 	if (reply.status === NOT_FOUND) return undefined
-	if (!isSuccess(reply)) throw refused(reply, `read the tags of ${worker}`)
-	const settings = decode.record(
-		fieldsOf(reply, 'Cloudflare').result,
+	const settings = resultOf(
+		reply,
+		`read the tags of ${worker}`,
 		'the settings',
 	)
 	return Array.isArray(settings.tags) ? decode.strings(settings, 'tags') : []
@@ -142,10 +142,9 @@ async function ensureStateBucket(account: Account): Promise<void> {
 // token itself as a key pair: its id as the access key, its SHA-256 as the secret key.
 export async function stateBackend(account: Account): Promise<StateBackend> {
 	await ensureStateBucket(account)
-	const verified = await ask(account, 'GET', '/user/tokens/verify')
-	if (!isSuccess(verified)) throw refused(verified, 'verify its own token')
-	const token = decode.record(
-		fieldsOf(verified, 'Cloudflare').result,
+	const token = resultOf(
+		await ask(account, 'GET', '/user/tokens/verify'),
+		'verify its own token',
 		'the token',
 	)
 	const secretKey = createHash('sha256').update(account.token).digest('hex')

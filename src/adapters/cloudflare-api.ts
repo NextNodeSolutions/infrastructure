@@ -51,6 +51,11 @@ export function refused(reply: Reply, action: string): Error {
 	)
 }
 
+export function resultOf(reply: Reply, action: string, what: string): Fields {
+	if (!isSuccess(reply)) throw refused(reply, action)
+	return decode.record(fieldsOf(reply, 'Cloudflare').result, what)
+}
+
 export function resultsOf(reply: Reply, action: string): readonly Fields[] {
 	if (!isSuccess(reply)) throw refused(reply, action)
 	return decode.records(fieldsOf(reply, 'Cloudflare'), 'result')
