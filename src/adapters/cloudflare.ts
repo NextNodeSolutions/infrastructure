@@ -129,15 +129,33 @@ export async function tagWorker(
 	if (!isSuccess(reply)) throw refused(reply, `tag ${worker}`)
 }
 
-export async function listZones(account: Account): Promise<readonly Zone[]> {
-	const zones = resultsOf(
-		await ask(
-			account,
-			'GET',
-			`/zones?account.id=${account.id}&per_page=${ZONES_PER_PAGE}`,
-		),
-		'list the zones of the account',
+function pageCountOf(reply: Reply): number {
+	const info = decode.record(
+		fieldsOf(reply, 'Cloudflare').result_info,
+		'result_info',
 	)
+	const pages = info.total_pages
+	if (typeof pages !== 'number')
+		throw new Error('Cloudflare: result_info.total_pages must be a number')
+	return pages
+}
+
+async function zonesFrom(
+	account: Account,
+	page: number,
+): Promise<readonly Fields[]> {
+	const reply = await ask(
+		account,
+		'GET',
+		`/zones?account.id=${account.id}&per_page=${ZONES_PER_PAGE}&page=${page}`,
+	)
+	const zones = resultsOf(reply, 'list the zones of the account')
+	if (page >= pageCountOf(reply)) return zones
+	return [...zones, ...(await zonesFrom(account, page + 1))]
+}
+
+export async function listZones(account: Account): Promise<readonly Zone[]> {
+	const zones = await zonesFrom(account, 1)
 	return zones.map(zone => ({
 		id: decode.string(zone, 'id'),
 		name: decode.string(zone, 'name'),
