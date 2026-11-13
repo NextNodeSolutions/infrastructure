@@ -77,7 +77,7 @@ A file with `[package]` publishes the package of the `package.json` beside it an
 | The Worker, the GitHub environment, the Pulumi stack | The deployable's name                                   |
 | A database or a bucket                               | After the deployable and the binding                    |
 
-Names are lowercase and bounded in length, and a name that does not fit is refused with the thing to rename. Production keeps the bare name. An environment added to the platform later takes its own name as a suffix, so it renames nothing that already serves.
+Names are lowercase and bounded in length, and a name that does not fit is refused with the thing to rename. Two packages whose names differ only by scope would derive one name, so the second is refused. Production keeps the bare name. An environment added to the platform later takes its own name as a suffix, so it renames nothing that already serves.
 
 ## How a mistake is reported
 

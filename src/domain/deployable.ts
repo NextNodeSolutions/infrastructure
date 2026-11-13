@@ -62,6 +62,24 @@ export function deployableFor(
 	return { name, kind, directory, package: placement.package }
 }
 
+// Two packages of a workspace can derive one name, `@a/web` and `@b/web` alike, and one
+// name is one Worker, one environment and one stack.
+export function refuseSharedNames(deployables: readonly Deployable[]): void {
+	const [clash] = deployables.flatMap((later, index) =>
+		deployables
+			.slice(0, index)
+			.filter(earlier => earlier.name === later.name)
+			.map(earlier => ({ earlier, later })),
+	)
+	if (!clash) return
+	const { earlier, later } = clash
+	const file = declarationFile(later.directory)
+	throw new Refusal(
+		file,
+		`${file}: the package ${later.package} would deploy as ${later.name}, like the package ${earlier.package} in ${earlier.directory}. Rename one of them, so that each deploys under a name of its own`,
+	)
+}
+
 export function decodeDeployEntry(
 	parsed: unknown,
 	source: string,

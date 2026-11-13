@@ -9,6 +9,7 @@ import { hasFile } from '../adapters/files.ts'
 import { installDependencies } from '../adapters/program-install.ts'
 import { programRoot } from '../adapters/relocation.ts'
 import { NEXTNODE_FILE } from '../domain/declaration.ts'
+import { refuseSharedNames } from '../domain/deployable.ts'
 import { MANIFEST_FILE } from '../domain/manifest.ts'
 import { Refusal } from '../domain/refusal.ts'
 
@@ -51,6 +52,7 @@ export async function survey(
 			readSubject(project, event.repository, directory),
 		),
 	)
+	refuseSharedNames(subjects.map(subject => subject.deployable))
 	const rows = await planRows(subjects, {
 		api,
 		checkout,
