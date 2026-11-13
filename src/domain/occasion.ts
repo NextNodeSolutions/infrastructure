@@ -6,6 +6,7 @@ export const DEPLOYMENTS_BRANCH = 'deployments'
 export type PullRequestEvent = {
 	readonly owner: string
 	readonly repository: string
+	readonly repositoryId: string
 	readonly defaultBranch: string
 	readonly baseRef: string
 	readonly headRef: string

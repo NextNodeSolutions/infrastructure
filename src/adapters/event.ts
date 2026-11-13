@@ -4,7 +4,11 @@ import { decoder } from '../domain/decode.ts'
 
 import { requiredVariable } from './environment.ts'
 
+import type { Fields } from '../domain/decode.ts'
 import type { PullRequestEvent } from '../domain/occasion.ts'
+
+const NOT_A_PULL_REQUEST =
+	'the Deploy workflow runs on pull request events only'
 
 // GitHub leaves the head repository empty once a fork is deleted.
 function isNamed(repository: unknown, fullName: string): boolean {
@@ -12,14 +16,22 @@ function isNamed(repository: unknown, fullName: string): boolean {
 	return 'full_name' in repository && repository.full_name === fullName
 }
 
+// The id outlives a rename, so ownership keys on it.
+function idOf(repository: Fields): string {
+	const { id } = repository
+	if (!Number.isSafeInteger(id)) {
+		throw new Error(
+			`repository.id must be an integer: ${NOT_A_PULL_REQUEST}`,
+		)
+	}
+	return String(id)
+}
+
 // The event GitHub wrote for this run. It is the one description of the pull request
 // that the project cannot write: the jobs that hold a credential decide from it alone.
 export function readPullRequestEvent(): PullRequestEvent {
 	const decode = decoder(
-		message =>
-			new Error(
-				`${message}: the Deploy workflow runs on pull request events only`,
-			),
+		message => new Error(`${message}: ${NOT_A_PULL_REQUEST}`),
 	)
 	const parsed: unknown = JSON.parse(
 		readFileSync(requiredVariable('GITHUB_EVENT_PATH'), 'utf8'),
@@ -32,6 +44,7 @@ export function readPullRequestEvent(): PullRequestEvent {
 	return {
 		owner: decode.string(decode.record(repository.owner, 'owner'), 'login'),
 		repository: decode.string(repository, 'name'),
+		repositoryId: idOf(repository),
 		defaultBranch: decode.string(repository, 'default_branch'),
 		baseRef: decode.string(base, 'ref'),
 		headRef: decode.string(head, 'ref'),
