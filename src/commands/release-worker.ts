@@ -1,11 +1,5 @@
 import { scratchDirectory } from '../adapters/artifact-files.ts'
-import {
-	accountOf,
-	hostnameHolder,
-	listZones,
-	recordTypesAt,
-	stateBackend,
-} from '../adapters/cloudflare.ts'
+import { accountOf, stateBackend, tagWorker } from '../adapters/cloudflare.ts'
 import { inGroup } from '../adapters/github.ts'
 import { waitUntilHealthy } from '../adapters/health.ts'
 import { runInOrder, stream } from '../adapters/processes.ts'
@@ -15,14 +9,14 @@ import { platformCredentials } from '../adapters/vault.ts'
 import { prepareWrangler, readUpload } from '../adapters/wrangler.ts'
 import { applyMigrations, upload } from '../domain/deploy-commands.ts'
 import { short } from '../domain/deploy-selection.ts'
-import { declarationFile } from '../domain/deployable.ts'
-import { refuseTakenHostname, zoneFor } from '../domain/hostname.ts'
 import {
 	hasResources,
 	NOTHING_PROVISIONED,
 	resourcePlan,
 } from '../domain/resources.ts'
 import { migratedDatabases, releaseConfig } from '../domain/wrangler-config.ts'
+
+import { claimWorker } from './release-claims.ts'
 
 import type { Account } from '../adapters/cloudflare.ts'
 import type { RunIdentity } from '../adapters/run-identity.ts'
@@ -58,7 +52,11 @@ export async function releaseWorker(
 	await installDependencies(context.root, 'deploying')
 	const credentials = await platformCredentials(context.identity)
 	const account = accountOf(credentials)
-	await refuseTaken(account, declaration, deployable)
+	const tags = await claimWorker(account, {
+		repository: context.repository,
+		deployable,
+		declaration,
+	})
 	const plan = resourcePlan(deployable, declaration)
 	const provisioned = await provision(
 		{ project: context.repository, stack: deployable.name },
@@ -76,6 +74,7 @@ export async function releaseWorker(
 		account,
 		context,
 	)
+	await tagWorker(account, deployable.name, tags)
 	const url = addressOf(declaration, uploaded)
 	const status = await waitUntilHealthy(`${url}${declaration.healthPath}`)
 	return {
@@ -89,25 +88,6 @@ export async function releaseWorker(
 			...resourceFacts(plan),
 		],
 	}
-}
-
-async function refuseTaken(
-	account: Account,
-	declaration: WorkerDeclaration,
-	deployable: Subject['deployable'],
-): Promise<void> {
-	const hostname = declaration.domain
-	if (!hostname) return
-	const worker = deployable.name
-	const holder = await hostnameHolder(account, hostname)
-	if (holder === worker) return
-	const zone = zoneFor(hostname, await listZones(account))
-	const recordTypes =
-		zone && !holder ? await recordTypesAt(account, zone, hostname) : []
-	refuseTakenHostname(
-		{ hostname, worker, holder, zone, recordTypes },
-		declarationFile(deployable.directory),
-	)
 }
 
 // One Pulumi project per repository, one stack per deployable.

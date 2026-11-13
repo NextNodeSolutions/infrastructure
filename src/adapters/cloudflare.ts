@@ -90,6 +90,36 @@ export async function hostnameHolder(
 	return decode.string(attached, 'service')
 }
 
+function settingsOf(account: Account, worker: string): string {
+	return `/accounts/${account.id}/workers/scripts/${worker}/script-settings`
+}
+
+// The tags of a Worker, and none when the account holds no Worker of that name.
+export async function workerTags(
+	account: Account,
+	worker: string,
+): Promise<readonly string[] | undefined> {
+	const reply = await ask(account, 'GET', settingsOf(account, worker))
+	if (reply.status === NOT_FOUND) return undefined
+	if (!isSuccess(reply)) throw refused(reply, `read the tags of ${worker}`)
+	const settings = decode.record(
+		fieldsOf(reply, 'Cloudflare').result,
+		'the settings',
+	)
+	return Array.isArray(settings.tags) ? decode.strings(settings, 'tags') : []
+}
+
+export async function tagWorker(
+	account: Account,
+	worker: string,
+	tags: readonly string[],
+): Promise<void> {
+	const reply = await ask(account, 'PATCH', settingsOf(account, worker), {
+		tags,
+	})
+	if (!isSuccess(reply)) throw refused(reply, `tag ${worker}`)
+}
+
 export async function listZones(account: Account): Promise<readonly Zone[]> {
 	const zones = resultsOf(
 		await ask(
