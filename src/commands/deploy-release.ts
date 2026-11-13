@@ -9,8 +9,8 @@ import {
 	reportDeployment,
 } from '../adapters/github-deployments.ts'
 import { writeSummary } from '../adapters/github.ts'
-import { programRoot } from '../adapters/program-directory.ts'
 import { installDependencies } from '../adapters/program-install.ts'
+import { programRoot } from '../adapters/relocation.ts'
 import { takeRunIdentity } from '../adapters/run-identity.ts'
 import { parseToml } from '../adapters/toml.ts'
 import { short } from '../domain/deploy-selection.ts'
