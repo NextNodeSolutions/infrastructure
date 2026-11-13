@@ -1,6 +1,6 @@
-import { requiredVariable, takeVariable } from '../adapters/environment.ts'
+import { requiredVariable } from '../adapters/environment.ts'
 import { readPullRequestEvent } from '../adapters/event.ts'
-import { gitHub } from '../adapters/github-api.ts'
+import { takeGitHub } from '../adapters/github-api.ts'
 import { writeOutputs, writeSummary } from '../adapters/github.ts'
 import { programRevision } from '../adapters/program-directory.ts'
 import { deployOutputs, NOTHING_TO_DEPLOY } from '../domain/deploy-outputs.ts'
@@ -19,14 +19,14 @@ import { survey } from './deploy-survey.ts'
 // one asks for nothing, so the run ends green with no build and no release.
 export async function deployDiscover(): Promise<void> {
 	const project = requiredVariable('GITHUB_WORKSPACE')
-	const token = takeVariable('GITHUB_TOKEN')
 	const event = readPullRequestEvent()
+	const api = takeGitHub(event)
 	if (occasionOf(event) !== 'release') {
 		writeOutputs(NOTHING_TO_DEPLOY)
 		writeSummary(NOT_STANDING)
 		return
 	}
-	const surveyed = await survey(project, event, gitHub(token, event))
+	const surveyed = await survey(project, event, api)
 	if (!surveyed) {
 		writeOutputs(NOTHING_TO_DEPLOY)
 		writeSummary(NOTHING_DECLARED)

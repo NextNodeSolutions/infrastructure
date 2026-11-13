@@ -1,5 +1,6 @@
 import { decoder } from '../domain/decode.ts'
 
+import { takeVariable } from './environment.ts'
 import { fieldsOf, isSuccess, messageOf, NOT_FOUND, send } from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
@@ -16,11 +17,12 @@ export type GitHub = {
 	readonly post: (path: string, body: Fields) => Promise<Reply>
 }
 
-// The REST API of the repository the run belongs to, with the job's own token.
-export function gitHub(
-	token: string,
+// The REST API of the repository the run belongs to, with the job's own token, taken out
+// of the environment so that no process the job starts afterwards inherits it.
+export function takeGitHub(
 	event: Pick<PullRequestEvent, 'owner' | 'repository'>,
 ): GitHub {
+	const token = takeVariable('GITHUB_TOKEN')
 	const root = `${API}/repos/${event.owner}/${event.repository}`
 	const headers = (accept: string): Record<string, string> => ({
 		authorization: `Bearer ${token}`,

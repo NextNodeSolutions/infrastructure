@@ -1,6 +1,6 @@
-import { requiredVariable, takeVariable } from '../adapters/environment.ts'
+import { requiredVariable } from '../adapters/environment.ts'
 import { readPullRequestEvent } from '../adapters/event.ts'
-import { gitHub } from '../adapters/github-api.ts'
+import { takeGitHub } from '../adapters/github-api.ts'
 import { hasStandingPullRequest } from '../adapters/github-standing.ts'
 import {
 	annotateWarning,
@@ -40,10 +40,9 @@ async function standingOf(
 // pull request that deployments run on is there to deploy it. It deploys nothing.
 export async function deployPlan(): Promise<void> {
 	const project = requiredVariable('GITHUB_WORKSPACE')
-	const token = takeVariable('GITHUB_TOKEN')
 	const event = readPullRequestEvent()
+	const api = takeGitHub(event)
 	if (occasionOf(event) !== 'proposal') return nothing(NOT_A_PROPOSAL)
-	const api = gitHub(token, event)
 	const surveyed = await survey(project, event, api)
 	if (!surveyed) return nothing(NOTHING_DECLARED)
 	const standing = await standingOf(api, event)

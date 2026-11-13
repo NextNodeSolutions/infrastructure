@@ -1,7 +1,7 @@
 import { refuseAnythingButFiles } from '../adapters/artifact-files.ts'
-import { requiredVariable, takeVariable } from '../adapters/environment.ts'
+import { requiredVariable } from '../adapters/environment.ts'
 import { readPullRequestEvent } from '../adapters/event.ts'
-import { branchCommit, gitHub, readFileAt } from '../adapters/github-api.ts'
+import { branchCommit, readFileAt, takeGitHub } from '../adapters/github-api.ts'
 import {
 	createDeployment,
 	reportDeployment,
@@ -34,13 +34,12 @@ import type { Subject } from '../domain/subject.ts'
 // build left. It releases the standing pull request and refuses every other.
 export async function deployRelease(): Promise<void> {
 	const workspace = requiredVariable('GITHUB_WORKSPACE')
-	const token = takeVariable('GITHUB_TOKEN')
-	const identity = takeRunIdentity()
 	const event = readPullRequestEvent()
+	const api = takeGitHub(event)
+	const identity = takeRunIdentity()
 	refuseUnlessStanding(event)
 	const requested = requestedDeployable()
 	const root = programRoot()
-	const api = gitHub(token, event)
 	await refuseStale(
 		api,
 		{ name: requested.name, commit: event.headSha },
