@@ -49,6 +49,7 @@ The scripts the workflow knows, and the status each one produces on the pull req
 | Script             | Status                          |
 | ------------------ | ------------------------------- |
 | `lint`             | Lint                            |
+| `format:check`     | Format                          |
 | `type-check`       | TypeScript                      |
 | `test:unit`        | Unit tests                      |
 | `test:integration` | Integration tests               |
