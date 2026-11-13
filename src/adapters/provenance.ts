@@ -7,7 +7,7 @@ import {
 	STATEMENT_PAYLOAD_TYPE,
 } from '../domain/provenance.ts'
 
-import { requiredVariable } from './environment.ts'
+import { currentRun, requiredVariable } from './environment.ts'
 import { identityToken } from './run-identity.ts'
 
 import type { BuildRun } from '../domain/provenance.ts'
@@ -25,15 +25,13 @@ export type Provenance = {
 
 function buildRun(): BuildRun {
 	return {
-		serverUrl: requiredVariable('GITHUB_SERVER_URL'),
-		repository: requiredVariable('GITHUB_REPOSITORY'),
+		...currentRun(),
 		repositoryId: requiredVariable('GITHUB_REPOSITORY_ID'),
 		repositoryOwnerId: requiredVariable('GITHUB_REPOSITORY_OWNER_ID'),
 		workflowRef: requiredVariable('GITHUB_WORKFLOW_REF'),
 		eventName: requiredVariable('GITHUB_EVENT_NAME'),
 		ref: requiredVariable('GITHUB_REF'),
 		sha: requiredVariable('GITHUB_SHA'),
-		runId: requiredVariable('GITHUB_RUN_ID'),
 		runAttempt: requiredVariable('GITHUB_RUN_ATTEMPT'),
 		runnerEnvironment: requiredVariable('RUNNER_ENVIRONMENT'),
 	}

@@ -1,4 +1,7 @@
+import { runUrl } from './run.ts'
+
 import type { Visibility } from './occasion.ts'
+import type { RunAddress } from './run.ts'
 import type { PublishedAs } from './subject.ts'
 
 export const STATEMENT_PAYLOAD_TYPE = 'application/vnd.in-toto+json'
@@ -10,16 +13,13 @@ const BUILD_TYPE =
 const BUILDER_PREFIX = 'https://github.com/actions/runner'
 
 // What GitHub says of the run that signs, through the job variables npm reads too.
-export type BuildRun = {
-	readonly serverUrl: string
-	readonly repository: string
+export type BuildRun = RunAddress & {
 	readonly repositoryId: string
 	readonly repositoryOwnerId: string
 	readonly workflowRef: string
 	readonly eventName: string
 	readonly ref: string
 	readonly sha: string
-	readonly runId: string
 	readonly runAttempt: string
 	readonly runnerEnvironment: string
 }
@@ -92,7 +92,7 @@ export function provenanceStatement(
 					id: `${BUILDER_PREFIX}/${run.runnerEnvironment}`,
 				},
 				metadata: {
-					invocationId: `${source}/actions/runs/${run.runId}/attempts/${run.runAttempt}`,
+					invocationId: `${runUrl(run)}/attempts/${run.runAttempt}`,
 				},
 			},
 		},

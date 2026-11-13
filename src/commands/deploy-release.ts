@@ -1,5 +1,5 @@
 import { refuseAnythingButFiles } from '../adapters/artifact-files.ts'
-import { requiredVariable } from '../adapters/environment.ts'
+import { currentRun, requiredVariable } from '../adapters/environment.ts'
 import { readPullRequestEvent } from '../adapters/event.ts'
 import { branchTip, takeGitHub } from '../adapters/github-api.ts'
 import {
@@ -15,6 +15,7 @@ import { short } from '../domain/deploy-selection.ts'
 import { renderFailure, renderReleased } from '../domain/deploy-summary.ts'
 import { refuseUnlessStanding } from '../domain/occasion.ts'
 import { causeOf } from '../domain/refusal.ts'
+import { runUrl } from '../domain/run.ts'
 
 import { artifactDirectory, requestedDeployable } from './deploy-job.ts'
 import { releasePackage } from './release-package.ts'
@@ -83,10 +84,6 @@ async function refuseStale(
 	throw new Error(cause)
 }
 
-function runUrl(): string {
-	return `${requiredVariable('GITHUB_SERVER_URL')}/${requiredVariable('GITHUB_REPOSITORY')}/actions/runs/${requiredVariable('GITHUB_RUN_ID')}`
-}
-
 // GitHub keeps the record: the environment named after the deployable shows what serves,
 // and its last success is the commit the next run compares with.
 async function recorded(
@@ -94,7 +91,7 @@ async function recorded(
 	{ name, commit }: Recorded,
 	release: () => Promise<Released>,
 ): Promise<void> {
-	const logUrl = runUrl()
+	const logUrl = runUrl(currentRun())
 	const at = short(commit)
 	const deployment = await createDeployment(api, {
 		environment: name,

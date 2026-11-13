@@ -1,3 +1,5 @@
+import type { RunAddress } from '../domain/run.ts'
+
 export function requiredVariable(name: string): string {
 	const found = process.env[name]
 	if (!found) {
@@ -12,6 +14,14 @@ export function requiredVariable(name: string): string {
 export function jsonVariable(name: string): unknown {
 	const parsed: unknown = JSON.parse(requiredVariable(name))
 	return parsed
+}
+
+export function currentRun(): RunAddress {
+	return {
+		serverUrl: requiredVariable('GITHUB_SERVER_URL'),
+		repository: requiredVariable('GITHUB_REPOSITORY'),
+		runId: requiredVariable('GITHUB_RUN_ID'),
+	}
 }
 
 export function optionalVariable(name: string): string | undefined {

@@ -1,4 +1,5 @@
 import { decoder } from '../domain/decode.ts'
+import { runIdIn } from '../domain/run.ts'
 
 import { anyInPages, refusedBy } from './github-api.ts'
 import { fieldsOf, isSuccess, NOT_FOUND, recordsOf } from './http.ts'
@@ -10,7 +11,6 @@ import type { GitHub } from './github-api.ts'
 // release only through these two, so they change together with deploy.yml.
 const DEPLOY_WORKFLOW = '.github/workflows/deploy.yml'
 const releaseJob = (environment: string): string => `Release ${environment}`
-const RUN_ID = /\/actions\/runs\/(\d+)(?:\/attempts\/\d+)?$/
 const decode = decoder(message => new Error(`GitHub release proof: ${message}`))
 
 type ReleaseProof = {
@@ -47,7 +47,7 @@ async function wasReleasedByPipeline(
 	api: GitHub,
 	proof: ReleaseProof,
 ): Promise<boolean> {
-	const runId = RUN_ID.exec(proof.logUrl)?.[1]
+	const runId = runIdIn(proof.logUrl)
 	if (!runId) return false
 	const reply = await api.get(`/actions/runs/${runId}`)
 	if (reply.status === NOT_FOUND) return false
