@@ -90,7 +90,7 @@ export function renderFailure(name: string, cause: string): string {
 		'',
 		cause,
 		'',
-		'What already serves keeps serving. Fix the cause and merge the fix, or re-run the failed jobs of this run: both deploy everything since the last deployment that succeeded.',
+		'The last deployment that succeeded stays the baseline. Fix the cause and merge the fix, or re-run the failed jobs of this run: both deploy everything since that deployment.',
 		'',
 	].join('\n')
 }

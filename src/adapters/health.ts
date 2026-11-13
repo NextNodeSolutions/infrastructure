@@ -35,7 +35,8 @@ function describe(answer: Answer | undefined): string {
 }
 
 // A deployment is done when what was deployed answers: any answer below 400 counts, a
-// redirect included.
+// redirect included. It is asked after the upload, so a failure here leaves the new
+// version serving.
 export async function waitUntilHealthy(url: string): Promise<number> {
 	const answers: Answer[] = []
 	const healthy = await until(async () => {
@@ -45,6 +46,6 @@ export async function waitUntilHealthy(url: string): Promise<number> {
 	}, PATIENCE)
 	if (healthy) return healthy.status
 	throw new Error(
-		`${url} did not answer below ${FIRST_CLIENT_ERROR} within ${PATIENCE.forMs / MS_PER_SECOND} seconds: last answer ${describe(answers.at(-1))}`,
+		`${url} did not answer below ${FIRST_CLIENT_ERROR} within ${PATIENCE.forMs / MS_PER_SECOND} seconds: last answer ${describe(answers.at(-1))}. The new version is uploaded and serves: merge a fix, or roll back to the previous version in Cloudflare`,
 	)
 }
