@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import { SIGSTORE } from '../domain/platform.ts'
 import {
 	provenanceStatement,
 	STATEMENT_PAYLOAD_TYPE,
@@ -14,9 +15,7 @@ import type { BuildRun } from '../domain/provenance.ts'
 import type { PublishedAs } from '../domain/subject.ts'
 import type { RunIdentity } from './run-identity.ts'
 
-const SIGSTORE_AUDIENCE = 'sigstore'
 const BUNDLE_FILE = 'provenance.sigstore.json'
-const TRANSPARENCY_LOG = 'https://search.sigstore.dev/'
 
 export type Provenance = {
 	readonly file: string
@@ -57,7 +56,11 @@ export async function signProvenance(
 	const bundle = await attest(
 		Buffer.from(JSON.stringify(statement)),
 		STATEMENT_PAYLOAD_TYPE,
-		{ identityToken: await identityToken(identity, SIGSTORE_AUDIENCE) },
+		{
+			identityToken: await identityToken(identity, SIGSTORE.audience),
+			fulcioURL: SIGSTORE.certificates,
+			rekorURL: SIGSTORE.transparencyLog,
+		},
 	)
 	const file = join(scratch, BUNDLE_FILE)
 	writeFileSync(file, JSON.stringify(bundle))
@@ -67,5 +70,5 @@ export async function signProvenance(
 			'Sigstore signed the provenance and recorded it in no transparency log',
 		)
 	}
-	return { file, logEntry: `${TRANSPARENCY_LOG}?logIndex=${entry.logIndex}` }
+	return { file, logEntry: `${SIGSTORE.search}?logIndex=${entry.logIndex}` }
 }

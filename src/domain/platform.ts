@@ -23,3 +23,11 @@ export const STATE_BUCKET = 'nextnode-deploy-state'
 
 export const NPM_REGISTRY = 'https://registry.npmjs.org'
 export const NPM_PACKAGE_PAGE = 'https://www.npmjs.com/package'
+
+// The public instance npm checks a provenance bundle against, as npm itself signs there.
+export const SIGSTORE = {
+	audience: 'sigstore',
+	certificates: 'https://fulcio.sigstore.dev',
+	transparencyLog: 'https://rekor.sigstore.dev',
+	search: 'https://search.sigstore.dev/',
+} as const
