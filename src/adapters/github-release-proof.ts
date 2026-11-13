@@ -1,4 +1,5 @@
 import { decoder } from '../domain/decode.ts'
+import { DEPLOY_WORKFLOW_PATH } from '../domain/platform.ts'
 import { runIdIn } from '../domain/run.ts'
 
 import { anyInPages, refusedBy } from './github-api.ts'
@@ -7,9 +8,8 @@ import { fieldsOf, isSuccess, NOT_FOUND, recordsOf } from './http.ts'
 import type { Fields } from '../domain/decode.ts'
 import type { GitHub } from './github-api.ts'
 
-// The workflow file and the name its Release job takes per deployable: a run proves a
-// release only through these two, so they change together with deploy.yml.
-const DEPLOY_WORKFLOW = '.github/workflows/deploy.yml'
+// The name the Release job takes per deployable: a run proves a release only through it
+// and the workflow's path, so both change together with deploy.yml.
 const releaseJob = (environment: string): string => `Release ${environment}`
 const decode = decoder(message => new Error(`GitHub release proof: ${message}`))
 
@@ -57,7 +57,7 @@ async function wasReleasedByPipeline(
 	if (
 		typeof workflowId !== 'number' ||
 		run.event !== 'pull_request' ||
-		run.path !== DEPLOY_WORKFLOW ||
+		run.path !== DEPLOY_WORKFLOW_PATH ||
 		run.head_sha !== proof.commit
 	)
 		return false

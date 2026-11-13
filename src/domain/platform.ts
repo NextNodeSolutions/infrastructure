@@ -21,6 +21,10 @@ export type PlatformCredentials = {
 // Only Release reads or writes this bucket, including its immutable ownership claims.
 export const STATE_BUCKET = 'nextnode-deploy-state'
 
+// The workflow every release runs in. npm trusts it per package by this file name alone.
+export const DEPLOY_WORKFLOW_FILE = 'deploy.yml'
+export const DEPLOY_WORKFLOW_PATH = `.github/workflows/${DEPLOY_WORKFLOW_FILE}`
+
 export const NPM_REGISTRY = 'https://registry.npmjs.org'
 export const NPM_PACKAGE_PAGE = 'https://www.npmjs.com/package'
 
