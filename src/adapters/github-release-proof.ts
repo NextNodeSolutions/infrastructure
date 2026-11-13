@@ -1,6 +1,6 @@
 import { decoder } from '../domain/decode.ts'
 
-import { findInPages, refusedBy } from './github-api.ts'
+import { anyInPages, refusedBy } from './github-api.ts'
 import { fieldsOf, isSuccess, NOT_FOUND, recordsOf } from './http.ts'
 
 import type { Fields } from '../domain/decode.ts'
@@ -26,7 +26,7 @@ async function hasSuccessfulRelease(
 	run: string,
 	environment: string,
 ): Promise<boolean> {
-	const found = await findInPages(
+	return anyInPages(
 		api,
 		{
 			path: `/actions/runs/${run}/jobs?filter=all`,
@@ -35,15 +35,12 @@ async function hasSuccessfulRelease(
 				decode.records(fieldsOf(reply, 'release jobs'), 'jobs'),
 		},
 		jobs =>
-			Promise.resolve(
-				jobs.some(
-					job =>
-						job.name === releaseJob(environment) &&
-						job.conclusion === 'success',
-				) || undefined,
+			jobs.some(
+				job =>
+					job.name === releaseJob(environment) &&
+					job.conclusion === 'success',
 			),
 	)
-	return found === true
 }
 
 async function wasReleasedByPipeline(
@@ -95,15 +92,13 @@ export async function successfulPipelineDeployment(
 	api: GitHub,
 	record: RecordedRelease,
 ): Promise<boolean> {
-	const found = await findInPages(
+	return anyInPages(
 		api,
 		{
 			path: `/deployments/${record.id}/statuses`,
 			action: 'read deployment statuses',
 			entries: reply => recordsOf(reply, 'GitHub release proof'),
 		},
-		async statuses =>
-			(await hasReleaseProof(api, record, statuses)) || undefined,
+		statuses => hasReleaseProof(api, record, statuses),
 	)
-	return found === true
 }

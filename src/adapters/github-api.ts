@@ -83,6 +83,19 @@ export async function findInPages<Found>(
 	return findInPages(api, listing, find, page + 1)
 }
 
+export async function anyInPages(
+	api: GitHub,
+	listing: Listing,
+	test: (entries: readonly Fields[]) => boolean | Promise<boolean>,
+): Promise<boolean> {
+	const found = await findInPages(
+		api,
+		listing,
+		async entries => (await test(entries)) || undefined,
+	)
+	return found === true
+}
+
 export type BranchTip = {
 	readonly commit: string
 	readonly parent: string | undefined
