@@ -3,10 +3,10 @@ import { join } from 'node:path'
 import { readCheckout } from '../adapters/checkout.ts'
 import { optionalVariable, requiredVariable } from '../adapters/environment.ts'
 import { hasFile, readManifest } from '../adapters/files.ts'
-import { hasChangesIn, mergeBase } from '../adapters/git.ts'
+import { hasChangesIn, mergeBase, revisionAt } from '../adapters/git.ts'
 import { writeOutputs, writeSummary } from '../adapters/github.ts'
 import { listWorkspace } from '../adapters/pnpm.ts'
-import { programRevision } from '../adapters/program-directory.ts'
+import { programRoot } from '../adapters/relocation.ts'
 import { ROOT_DIRECTORY } from '../domain/directory.ts'
 import { MANIFEST_FILE, manifestFile } from '../domain/manifest.ts'
 import { NOTHING_TO_CHECK, outputsFor } from '../domain/outputs.ts'
@@ -54,7 +54,7 @@ export async function discover(): Promise<void> {
 			selection,
 			executor,
 			packages,
-			programRevision: await programRevision(),
+			programRevision: await revisionAt(programRoot()),
 		}),
 	)
 }

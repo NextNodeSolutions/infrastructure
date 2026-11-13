@@ -1,5 +1,13 @@
 import { capture, succeeds } from './processes.ts'
 
+export async function revisionAt(cwd: string): Promise<string> {
+	const revision = await capture(
+		{ program: 'git', args: ['rev-parse', 'HEAD'] },
+		cwd,
+	)
+	return revision.trim()
+}
+
 export type Relation = 'same' | 'older' | 'newer' | 'unrelated'
 
 function isAncestor(

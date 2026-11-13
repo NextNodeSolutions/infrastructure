@@ -1,8 +1,9 @@
 import { requiredVariable } from '../adapters/environment.ts'
 import { readPullRequestEvent } from '../adapters/event.ts'
+import { revisionAt } from '../adapters/git.ts'
 import { takeGitHub } from '../adapters/github-api.ts'
 import { writeOutputs, writeSummary } from '../adapters/github.ts'
-import { programRevision } from '../adapters/program-directory.ts'
+import { programRoot } from '../adapters/relocation.ts'
 import { deployOutputs, NOTHING_TO_DEPLOY } from '../domain/deploy-outputs.ts'
 import {
 	NOT_STANDING,
@@ -46,7 +47,7 @@ export async function deployDiscover(): Promise<void> {
 		renderRelease({
 			commit: event.headSha,
 			rows,
-			programRevision: await programRevision(),
+			programRevision: await revisionAt(programRoot()),
 		}),
 	)
 }
