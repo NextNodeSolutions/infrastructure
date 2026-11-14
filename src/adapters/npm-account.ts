@@ -4,6 +4,8 @@ import { join } from 'node:path'
 
 import { MANIFEST_FILE } from '../domain/manifest.ts'
 import {
+	approveStage,
+	listStages,
 	listTrust,
 	placeholderManifest,
 	showTrust,
@@ -11,10 +13,11 @@ import {
 	trustDeploy,
 	whoAmI,
 } from '../domain/npm-setup.ts'
+import { decodeStageList, pendingPlaceholder } from '../domain/npm-stage.ts'
 import { asksForApproval, decodeTrustList } from '../domain/npm-trust.ts'
 import { NPM_REGISTRY } from '../domain/platform.ts'
 
-import { attempt, stream } from './processes.ts'
+import { attempt, capture, stream } from './processes.ts'
 
 import type { TrustedPublisher } from '../domain/npm-trust.ts'
 
@@ -43,14 +46,41 @@ export function signedInAs(): Promise<string> {
 	})
 }
 
-// Staging creates the package with no approval and publishes nothing anyone installs.
-export function stagePackage(name: string, repository: string): Promise<void> {
+async function stagedPlaceholder(
+	name: string,
+	directory: string,
+): Promise<string | undefined> {
+	const printed = await capture(listStages(name, NPM_REGISTRY), directory)
+	return pendingPlaceholder(decodeStageList(printed))
+}
+
+async function newStage(
+	name: string,
+	repository: string,
+	directory: string,
+): Promise<string> {
+	writeFileSync(
+		join(directory, MANIFEST_FILE),
+		JSON.stringify(placeholderManifest(name, repository)),
+	)
+	await stream(stagePlaceholder(name, NPM_REGISTRY), directory)
+	const id = await stagedPlaceholder(name, directory)
+	if (!id)
+		throw new Error(`npm staged ${name} and lists no pending stage of it`)
+	return id
+}
+
+// A staged package has no registry document until its stage is approved, and approving
+// is what asks the person for two-factor authentication, so it runs in their terminal.
+export function publishPlaceholder(
+	name: string,
+	repository: string,
+): Promise<void> {
 	return inEmptyDirectory(async directory => {
-		writeFileSync(
-			join(directory, MANIFEST_FILE),
-			JSON.stringify(placeholderManifest(name, repository)),
-		)
-		await stream(stagePlaceholder(name, NPM_REGISTRY), directory)
+		const id =
+			(await stagedPlaceholder(name, directory)) ??
+			(await newStage(name, repository, directory))
+		await stream(approveStage(id, NPM_REGISTRY), directory)
 	})
 }
 

@@ -128,8 +128,8 @@ export async function latestVersion(name: string): Promise<string | undefined> {
 	return latest
 }
 
-// Asked without a credential: a public package has a document once it is published or
-// staged, and the registry answers a scoped name it shows nothing of with 401.
+// Asked without a credential: a public package has a document once a version of it is
+// published, never while it is only staged, and a scoped name it shows nothing of may get 401.
 export async function isRegistered(name: string): Promise<boolean> {
 	const reply = await send({
 		method: 'GET',

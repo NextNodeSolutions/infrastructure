@@ -7,8 +7,8 @@ import {
 } from '../adapters/checkout.ts'
 import { directoriesTracking, originUrl } from '../adapters/git.ts'
 import {
+	publishPlaceholder,
 	signedInAs,
-	stagePackage,
 	trustDeployWorkflow,
 	trustedPublishers,
 } from '../adapters/npm-account.ts'
@@ -30,8 +30,8 @@ import { publishedAs } from '../domain/subject.ts'
 import type { SetupOutcome } from '../domain/npm-setup.ts'
 import type { PublishedAs } from '../domain/subject.ts'
 
-// The registry lists a package a moment after it accepts it.
-const PATIENCE = { everyMs: 2000, forMs: 60_000 }
+// npm lists a package a minute or more after it publishes it.
+const PATIENCE = { everyMs: 3000, forMs: 180_000 }
 
 async function declaredPackages(
 	project: string,
@@ -65,13 +65,15 @@ async function createPackage(
 ): Promise<void> {
 	refuseStagingVersion(published)
 	const { name } = published
-	await stagePackage(name, repository)
+	await publishPlaceholder(name, repository)
 	const registered = await until(
 		async () => ((await isRegistered(name)) ? { name } : undefined),
 		PATIENCE,
 	)
 	if (!registered) {
-		throw new Error(`npm staged ${name} and does not list the package yet`)
+		throw new Error(
+			`npm published ${name} and does not list it yet: run this command again in a few minutes`,
+		)
 	}
 }
 
@@ -79,8 +81,8 @@ async function setUp(
 	published: PublishedAs,
 	repository: string,
 ): Promise<SetupOutcome> {
-	const isStaged = !(await isRegistered(published.name))
-	if (isStaged) await createPackage(published, repository)
+	const isCreated = !(await isRegistered(published.name))
+	if (isCreated) await createPackage(published, repository)
 	if (await isTrusted(published.name, repository))
 		return { kind: 'trusted already', published }
 	// Asked again after npm's approval, which can take minutes, so a version published meanwhile gets no trust to let expire.
@@ -92,7 +94,7 @@ async function setUp(
 			`npm does not list ${repository} as a trusted publisher of ${published.name} after setting it`,
 		)
 	}
-	return { kind: 'trusted now', published, isStaged }
+	return { kind: 'trusted now', published, isCreated }
 }
 
 function inOrder(

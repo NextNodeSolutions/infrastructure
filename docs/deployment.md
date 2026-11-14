@@ -223,7 +223,7 @@ Nothing else is created by hand. The first release creates the Worker, its hostn
 
 `pnpm setup-npm` takes every package that the repository's `nextnode.toml` files declare and whose declared version is not on npm yet. For each one it:
 
-1. Creates the package when the registry has no such name, by staging a placeholder version. npm then shows a public `0.0.0-stage`, and the staged `0.0.0-placeholder` behind it is never approved, so nothing installs it. Staging takes both versions for good, so a new package that declares either is refused before anything is created.
+1. Creates the package when the registry has no such name: it stages an empty `0.0.0-placeholder` and approves that stage, since npm lists a staged package only once its stage is approved. The approval is the person's first two-factor authentication. A stage that an interrupted run left pending is approved instead of staged again. The package then holds that empty version, and an npm client may also have created it with a public `0.0.0-stage`. Staging takes both versions for good, so a new package that declares either is refused before anything is created.
 2. Makes `deploy.yml` of the repository the package's trusted publisher, with direct publishing allowed, unless that trust exists already.
 3. Lists the trust again and fails when it is missing.
 

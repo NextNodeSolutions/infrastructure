@@ -1,4 +1,5 @@
 import { scopeRegistry } from './deploy-commands.ts'
+import { PLACEHOLDER } from './npm-stage.ts'
 import { DEPLOY_WORKFLOW_FILE } from './platform.ts'
 
 import type { Command } from './commands.ts'
@@ -9,9 +10,7 @@ const HOUR_MS = 3_600_000
 const VALIDATION_HOURS = 48
 const GITHUB_REMOTE =
 	/^(?:[a-z][a-z+]*:\/\/)?(?:[^@/\s]+@)?github\.com(?::\d+)?[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i
-// Staged and never approved, so nothing installs it, at a prerelease no release declares.
-const PLACEHOLDER = { version: '0.0.0-placeholder', tag: 'placeholder' }
-// The public version npm shows for a package that exists only as a stage.
+// An npm client may create the package with this public version before it stages into it.
 const NPM_STAGE_VERSION = '0.0.0-stage'
 const STAGING_VERSIONS = [NPM_STAGE_VERSION, PLACEHOLDER.version]
 
@@ -21,7 +20,7 @@ export type SetupOutcome =
 	| {
 			readonly kind: 'trusted now'
 			readonly published: PublishedAs
-			readonly isStaged: boolean
+			readonly isCreated: boolean
 	  }
 
 export function githubRepository(remote: string): string {
@@ -80,6 +79,15 @@ export function stagePlaceholder(name: string, registry: string): Command {
 	)
 }
 
+export function listStages(name: string, registry: string): Command {
+	return npm(registry, 'stage', 'list', name, '--json')
+}
+
+// npm publishes the stage once the person approves it in the browser.
+export function approveStage(id: string, registry: string): Command {
+	return npm(registry, 'stage', 'approve', id)
+}
+
 export function listTrust(name: string, registry: string): Command {
 	return npm(registry, 'trust', 'list', name, '--json')
 }
@@ -133,8 +141,8 @@ function outcomeLine(
 		return `${name}: ${version} is on npm already and no release is pending, so nothing was set: npm would drop a trust that no release uses within ${VALIDATION_HOURS} hours. Run this again on the branch that raises the version.`
 	if (outcome.kind === 'trusted already')
 		return `${name}: npm already trusts ${repository} ${DEPLOY_WORKFLOW_FILE}. Nothing changed. A trust that never published within ${VALIDATION_HOURS} hours of being set has expired, and the release of ${version} refuses it: then delete it in the package's settings on npmjs.com and run this again.`
-	const created = outcome.isStaged
-		? `created with npm's public ${NPM_STAGE_VERSION} placeholder (the staged ${PLACEHOLDER.version} behind it stays unapproved and installs nothing), `
+	const created = outcome.isCreated
+		? `created with the empty version ${PLACEHOLDER.version}, `
 		: ''
 	return `${name}: ${created}npm now trusts ${repository} ${DEPLOY_WORKFLOW_FILE}. The next Deploy run that reaches it publishes ${version}: merge before ${deadline}. Past that the trust expires: delete it in the package's settings on npmjs.com, then run this again.`
 }
