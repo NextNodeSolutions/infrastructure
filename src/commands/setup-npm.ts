@@ -7,14 +7,13 @@ import {
 } from '../adapters/checkout.ts'
 import { directoriesTracking, originUrl } from '../adapters/git.ts'
 import {
-	publishPlaceholder,
 	signedInAs,
+	stagePackage,
 	trustDeployWorkflow,
 	trustedPublishers,
 } from '../adapters/npm-account.ts'
 import { hasVersion, isRegistered } from '../adapters/npm.ts'
 import { isTerminal, say } from '../adapters/terminal.ts'
-import { until } from '../adapters/wait.ts'
 import { NEXTNODE_FILE } from '../domain/declaration.ts'
 import {
 	APPROVAL_HINT,
@@ -29,9 +28,6 @@ import { publishedAs } from '../domain/subject.ts'
 
 import type { SetupOutcome } from '../domain/npm-setup.ts'
 import type { PublishedAs } from '../domain/subject.ts'
-
-// npm lists a package a minute or more after it publishes it.
-const PATIENCE = { everyMs: 3000, forMs: 180_000 }
 
 async function declaredPackages(
 	project: string,
@@ -64,17 +60,7 @@ async function createPackage(
 	repository: string,
 ): Promise<void> {
 	refuseStagingVersion(published)
-	const { name } = published
-	await publishPlaceholder(name, repository)
-	const registered = await until(
-		async () => ((await isRegistered(name)) ? { name } : undefined),
-		PATIENCE,
-	)
-	if (!registered) {
-		throw new Error(
-			`npm published ${name} and does not list it yet: run this command again in a few minutes`,
-		)
-	}
+	await stagePackage(published.name, repository)
 }
 
 async function setUp(

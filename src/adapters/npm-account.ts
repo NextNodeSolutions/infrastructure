@@ -4,7 +4,6 @@ import { join } from 'node:path'
 
 import { MANIFEST_FILE } from '../domain/manifest.ts'
 import {
-	approveStage,
 	listStages,
 	listTrust,
 	placeholderManifest,
@@ -54,33 +53,18 @@ async function stagedPlaceholder(
 	return pendingPlaceholder(decodeStageList(printed))
 }
 
-async function newStage(
-	name: string,
-	repository: string,
-	directory: string,
-): Promise<string> {
-	writeFileSync(
-		join(directory, MANIFEST_FILE),
-		JSON.stringify(placeholderManifest(name, repository)),
-	)
-	await stream(stagePlaceholder(name, NPM_REGISTRY), directory)
-	const id = await stagedPlaceholder(name, directory)
-	if (!id)
-		throw new Error(`npm staged ${name} and lists no pending stage of it`)
-	return id
-}
-
-// A staged package has no registry document until its stage is approved, and approving
-// is what asks the person for two-factor authentication, so it runs in their terminal.
-export function publishPlaceholder(
-	name: string,
-	repository: string,
-): Promise<void> {
+// The first stage of a new name makes npm create the package, with no approval. The public
+// registry can take minutes to show it, while npm's stage list shows the stage at once.
+export function stagePackage(name: string, repository: string): Promise<void> {
 	return inEmptyDirectory(async directory => {
-		const id =
-			(await stagedPlaceholder(name, directory)) ??
-			(await newStage(name, repository, directory))
-		await stream(approveStage(id, NPM_REGISTRY), directory)
+		if (await stagedPlaceholder(name, directory)) return
+		writeFileSync(
+			join(directory, MANIFEST_FILE),
+			JSON.stringify(placeholderManifest(name, repository)),
+		)
+		await stream(stagePlaceholder(name, NPM_REGISTRY), directory)
+		if (await stagedPlaceholder(name, directory)) return
+		throw new Error(`npm staged ${name} and lists no pending stage of it`)
 	})
 }
 

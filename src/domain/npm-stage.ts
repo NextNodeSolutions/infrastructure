@@ -1,6 +1,6 @@
 import { decoder } from './decode.ts'
 
-// The empty version that creates a package, at a prerelease no release declares.
+// Staged and never approved, so nothing installs it, at a prerelease no release declares.
 export const PLACEHOLDER = { version: '0.0.0-placeholder', tag: 'placeholder' }
 const PENDING = 'staged'
 
@@ -21,8 +21,8 @@ export function decodeStageList(printed: string): readonly Stage[] {
 	}))
 }
 
-// npm refuses to stage a version twice, so a run stopped before its approval leaves the
-// placeholder staged for the next run to approve.
+// npm refuses to stage a version twice, and a pending placeholder means a run created the
+// package already.
 export function pendingPlaceholder(
 	stages: readonly Stage[],
 ): string | undefined {

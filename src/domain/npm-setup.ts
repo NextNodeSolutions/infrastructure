@@ -10,7 +10,7 @@ const HOUR_MS = 3_600_000
 const VALIDATION_HOURS = 48
 const GITHUB_REMOTE =
 	/^(?:[a-z][a-z+]*:\/\/)?(?:[^@/\s]+@)?github\.com(?::\d+)?[:/]([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i
-// An npm client may create the package with this public version before it stages into it.
+// The public version npm creates a package with when the first stage of it arrives.
 const NPM_STAGE_VERSION = '0.0.0-stage'
 const STAGING_VERSIONS = [NPM_STAGE_VERSION, PLACEHOLDER.version]
 
@@ -83,11 +83,6 @@ export function listStages(name: string, registry: string): Command {
 	return npm(registry, 'stage', 'list', name, '--json')
 }
 
-// npm publishes the stage once the person approves it in the browser.
-export function approveStage(id: string, registry: string): Command {
-	return npm(registry, 'stage', 'approve', id)
-}
-
 export function listTrust(name: string, registry: string): Command {
 	return npm(registry, 'trust', 'list', name, '--json')
 }
@@ -142,7 +137,7 @@ function outcomeLine(
 	if (outcome.kind === 'trusted already')
 		return `${name}: npm already trusts ${repository} ${DEPLOY_WORKFLOW_FILE}. Nothing changed. A trust that never published within ${VALIDATION_HOURS} hours of being set has expired, and the release of ${version} refuses it: then delete it in the package's settings on npmjs.com and run this again.`
 	const created = outcome.isCreated
-		? `created with the empty version ${PLACEHOLDER.version}, `
+		? `created with npm's public ${NPM_STAGE_VERSION} placeholder (the staged ${PLACEHOLDER.version} behind it stays unapproved and installs nothing), `
 		: ''
 	return `${name}: ${created}npm now trusts ${repository} ${DEPLOY_WORKFLOW_FILE}. The next Deploy run that reaches it publishes ${version}: merge before ${deadline}. Past that the trust expires: delete it in the package's settings on npmjs.com, then run this again.`
 }
