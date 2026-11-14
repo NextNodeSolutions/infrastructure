@@ -20,13 +20,24 @@ export async function originUrl(cwd: string): Promise<string> {
 	return url.trim()
 }
 
-// Read from git's index alone, so no tool of the project runs.
+// Read from git's index alone, so no tool of the project runs: the listing would otherwise
+// run the program a checkout's own git config names as its fsmonitor.
 export async function directoriesTracking(
 	file: string,
 	cwd: string,
 ): Promise<readonly string[]> {
 	const listed = await capture(
-		{ program: 'git', args: ['ls-files', '-z', '--', `:(glob)**/${file}`] },
+		{
+			program: 'git',
+			args: [
+				'-c',
+				'core.fsmonitor=false',
+				'ls-files',
+				'-z',
+				'--',
+				`:(glob)**/${file}`,
+			],
+		},
 		cwd,
 	)
 	return listed
