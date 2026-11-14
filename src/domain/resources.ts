@@ -1,4 +1,5 @@
 import { declarationFile } from './deployable.ts'
+import { STATE_BUCKET } from './platform.ts'
 import { refusal } from './refusal.ts'
 
 import type { WorkerDeclaration } from './declaration.ts'
@@ -36,10 +37,10 @@ export function resourcePlan(
 	deployable: Deployable,
 	declaration: WorkerDeclaration,
 ): ResourcePlan {
+	const file = declarationFile(deployable.directory)
 	const named = (binding: string): NamedResource => {
 		const name = `${deployable.name}-${binding.toLowerCase().replaceAll('_', '-')}`
 		if (name.length > LONGEST_NAME) {
-			const file = declarationFile(deployable.directory)
 			throw refusal(
 				file,
 				`the binding ${binding} would create ${name}, longer than ${LONGEST_NAME} characters. Shorten the binding`,
@@ -47,11 +48,19 @@ export function resourcePlan(
 		}
 		return { binding, name }
 	}
+	const buckets = declaration.buckets.map(bucket => named(bucket.binding))
+	const platformBucket = buckets.find(bucket => bucket.name === STATE_BUCKET)
+	if (platformBucket) {
+		throw refusal(
+			file,
+			`the binding ${platformBucket.binding} would bind ${STATE_BUCKET}, the bucket that holds every repository's deployment state. Choose another binding`,
+		)
+	}
 	return {
 		databases: declaration.databases.map(database =>
 			named(database.binding),
 		),
-		buckets: declaration.buckets.map(bucket => named(bucket.binding)),
+		buckets,
 	}
 }
 
