@@ -2,9 +2,13 @@ import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { decoder } from '../domain/decode.ts'
-import { printPackedManifest } from '../domain/deploy-commands.ts'
 import { decodeManifest } from '../domain/manifest.ts'
 import { untrustedPackage } from '../domain/npm-trust.ts'
+import {
+	listPackedMembers,
+	printPackedManifest,
+	refuseStrayMembers,
+} from '../domain/packed-tarball.ts'
 import { NPM_REGISTRY } from '../domain/platform.ts'
 import { refusal } from '../domain/refusal.ts'
 
@@ -54,6 +58,7 @@ export async function packedManifest(
 	cwd: string,
 	file: string,
 ): Promise<Manifest> {
+	refuseStrayMembers(await capture(listPackedMembers(tarball), cwd), file)
 	const printed = await capture(printPackedManifest(tarball), cwd)
 	const parsed: unknown = JSON.parse(printed)
 	const manifest = decode.record(parsed, PACKED_MANIFEST)

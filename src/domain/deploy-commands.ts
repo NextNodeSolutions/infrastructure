@@ -102,11 +102,6 @@ export function upload(
 	}
 }
 
-// The manifest a tarball carries, printed without unpacking anything.
-export function printPackedManifest(tarball: string): Command {
-	return { program: 'tar', args: ['-xzOf', tarball, 'package/package.json'] }
-}
-
 export type Publishing = {
 	readonly name: string
 	readonly access: PackageAccess
