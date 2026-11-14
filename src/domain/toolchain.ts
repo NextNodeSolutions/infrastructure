@@ -12,7 +12,7 @@ const PNPM_DECLARATION = /^pnpm@(\d+\.\d+\.\d+)(?:\+sha\d+\.[0-9a-f]+)?$/
 const LEADING_MAJOR = /^\D*(\d+)/
 // The check jobs run this program with the project's Node, and Node strips types
 // from 22 on; every earlier major has also left maintenance.
-export const LOWEST_NODE_MAJOR = 22
+const LOWEST_NODE_MAJOR = 22
 
 export function readToolchain(manifest: Manifest): Toolchain {
 	const pnpmVersion = PNPM_DECLARATION.exec(

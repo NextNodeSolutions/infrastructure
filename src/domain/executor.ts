@@ -1,6 +1,6 @@
-export type Executor = 'single' | 'pnpm' | 'turbo'
+export const EXECUTORS = ['single', 'pnpm', 'turbo'] as const
 
-export const EXECUTORS: readonly Executor[] = ['single', 'pnpm', 'turbo']
+export type Executor = (typeof EXECUTORS)[number]
 
 export const WORKSPACE_FILE = 'pnpm-workspace.yaml'
 export const TURBO_FILE = 'turbo.json'
@@ -13,8 +13,4 @@ export type RepositoryShape = {
 export function executorFor(shape: RepositoryShape): Executor {
 	if (!shape.hasWorkspaceFile) return 'single'
 	return shape.hasTurboFile ? 'turbo' : 'pnpm'
-}
-
-export function isExecutor(candidate: string): candidate is Executor {
-	return EXECUTORS.some(executor => executor === candidate)
 }

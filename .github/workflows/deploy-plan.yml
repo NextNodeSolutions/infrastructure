@@ -1,0 +1,78 @@
+# This file holds what only GitHub reads: when the workflow runs, what each job may
+# touch, which jobs exist and how they depend on each other, and the actions it pins.
+# Every decision is made by the program under src/, which each job fetches at this
+# file's own commit and runs with one line.
+#
+# It runs on a pull request into the default branch and deploys nothing: no job here can
+# ask for an identity token. Plan reads and runs the project and holds a token that only
+# reads. Anchor holds the one token that writes, and neither checks out, installs nor
+# runs anything of the project.
+name: Deploy plan
+
+on:
+    pull_request:
+
+permissions:
+    contents: read
+
+concurrency:
+    group: deploy-plan-${{ github.repository }}-${{ github.event.number }}
+    cancel-in-progress: true
+
+env:
+    PROGRAM: .nextnode-checks
+
+jobs:
+    plan:
+        name: Plan
+        runs-on: ubuntu-24.04
+        timeout-minutes: 10
+        permissions:
+            actions: read
+            contents: read
+            deployments: read
+            pull-requests: read
+        outputs:
+            anchor: ${{ steps.plan.outputs.anchor }}
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+                  fetch-depth: 0
+                  filter: blob:none
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  repository: ${{ job.workflow_repository }}
+                  ref: ${{ job.workflow_sha }}
+                  path: ${{ env.PROGRAM }}
+                  persist-credentials: false
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: ${{ env.PROGRAM }}/.node-version
+            - id: plan
+              env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              run: node "$PROGRAM/src/cli.ts" deploy-plan
+
+    anchor:
+        name: Open the standing pull request
+        needs: plan
+        if: needs.plan.outputs.anchor == 'true'
+        runs-on: ubuntu-24.04
+        timeout-minutes: 5
+        permissions:
+            contents: write
+            pull-requests: write
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  repository: ${{ job.workflow_repository }}
+                  ref: ${{ job.workflow_sha }}
+                  path: ${{ env.PROGRAM }}
+                  persist-credentials: false
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: ${{ env.PROGRAM }}/.node-version
+            - env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              run: node "$PROGRAM/src/cli.ts" deploy-anchor

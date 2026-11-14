@@ -1,0 +1,37 @@
+// The one place that names the platform's own accounts. None of these is a secret: the
+// vault admits a run by the claims of its GitHub token, never by knowing an id.
+export const VAULT = {
+	api: 'https://app.infisical.com/api',
+	identity: '17af2913-5649-4771-b149-aa9bf50ff39d',
+	project: '721a5f71-3801-40e2-a06d-a4a9b431e1c7',
+	environment: 'main',
+	audience: 'nextnode-deploy',
+} as const
+
+export const PLATFORM_SECRETS = {
+	cloudflareToken: 'CLOUDFLARE_API_TOKEN',
+	cloudflareAccount: 'CLOUDFLARE_ACCOUNT_ID',
+	statePassphrase: 'PULUMI_CONFIG_PASSPHRASE',
+} as const
+
+export type PlatformCredentials = {
+	readonly [Name in keyof typeof PLATFORM_SECRETS]: string
+}
+
+// Only Release reads or writes this bucket, including its immutable ownership claims.
+export const STATE_BUCKET = 'nextnode-deploy-state'
+
+// The workflow every release runs in. npm trusts it per package by this file name alone.
+export const DEPLOY_WORKFLOW_FILE = 'deploy.yml'
+export const DEPLOY_WORKFLOW_PATH = `.github/workflows/${DEPLOY_WORKFLOW_FILE}`
+
+export const NPM_REGISTRY = 'https://registry.npmjs.org'
+export const NPM_PACKAGE_PAGE = 'https://www.npmjs.com/package'
+
+// The public instance npm checks a provenance bundle against, as npm itself signs there.
+export const SIGSTORE = {
+	audience: 'sigstore',
+	certificates: 'https://fulcio.sigstore.dev',
+	transparencyLog: 'https://rekor.sigstore.dev',
+	search: 'https://search.sigstore.dev/',
+} as const

@@ -1,12 +1,13 @@
 {
   "name": "@nextnode-solutions/infrastructure",
   "version": "0.0.0",
-  "description": "The program behind the Checks workflow: it reads the repository it runs in and runs what that repository declares.",
+  "description": "The program behind the Checks and Deploy workflows: it reads the repository it runs in, then runs and deploys what that repository declares.",
   "scripts": {
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint",
     "prepare": "node .husky/install.mjs",
+    "setup-npm": "node src/setup-npm.ts",
     "type-check": "tsc --noEmit"
   },
   "devDependencies": {
@@ -26,5 +27,15 @@
   },
   "private": true,
   "packageManager": "pnpm@10.11.0",
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "sigstore": "5.0.1",
+    "smol-toml": "1.9.1"
+  },
+  "optionalDependencies": {
+    "@pulumi/cloudflare": "6.24.0",
+    "@pulumi/pulumi": "3.276.0",
+    "aws4fetch": "1.0.20",
+    "wrangler": "4.161.0"
+  }
 }

@@ -45,13 +45,18 @@ export function selectAgainstBase(
 	}
 }
 
+// Every package a change since the base reaches, through pnpm's own graph. A deployment
+// ignores no file: Markdown is content for a site, so it selects like code does.
+export function changedSince(base: string): readonly string[] {
+	return ['--filter', `...[${base}]`]
+}
+
 // pnpm's own graph decides: Markdown never selects a package, and a change that
 // only touches tests selects the package but not its dependents.
 export function filterArguments(selection: Selection): readonly string[] {
 	if (selection.scope === 'everything') return []
 	return [
-		'--filter',
-		`...[${selection.base}]`,
+		...changedSince(selection.base),
 		'--changed-files-ignore-pattern',
 		'**/*.md',
 		'--test-pattern',
