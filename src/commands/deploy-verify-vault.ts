@@ -1,6 +1,6 @@
 import { readPullRequestEvent } from '../adapters/event.ts'
 import { branchTip, takeGitHub } from '../adapters/github-api.ts'
-import { writeSummary } from '../adapters/github.ts'
+import { writeOutputs, writeSummary } from '../adapters/github.ts'
 import { takeRunIdentity } from '../adapters/run-identity.ts'
 import { platformCredentials } from '../adapters/vault.ts'
 import {
@@ -11,9 +11,12 @@ import {
 export async function deployVerifyVault(): Promise<void> {
 	try {
 		const event = readPullRequestEvent()
+		if (!isVaultVerification(event)) {
+			writeOutputs({ selected: 'false' })
+			return
+		}
 		refuseUnlessStanding(event)
-		if (!isVaultVerification(event))
-			throw new Error('Vault check not selected')
+		writeOutputs({ selected: 'true' })
 		const { commit } = await branchTip(
 			takeGitHub(event),
 			event.defaultBranch,
