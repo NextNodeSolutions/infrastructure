@@ -15,6 +15,7 @@ const decode = decoder(message => new Error(`The vault: ${message}`))
 async function login(runIdentityToken: string): Promise<string> {
 	const reply = await send({
 		method: 'POST',
+		redirect: 'error',
 		url: `${VAULT.api}/v1/auth/oidc-auth/login`,
 		headers: {},
 		body: { identityId: VAULT.identity, jwt: runIdentityToken },
@@ -24,9 +25,7 @@ async function login(runIdentityToken: string): Promise<string> {
 			`The vault admitted no login from this run (HTTP ${reply.status}): ${messageOf(reply)}. It admits the Deploy workflow on the standing pull request and nothing else`,
 		)
 	}
-	const token = decode.string(fieldsOf(reply, 'The vault'), 'accessToken')
-	maskSecret(token)
-	return token
+	return decode.string(fieldsOf(reply, 'The vault'), 'accessToken')
 }
 
 async function readSecret(token: string, name: string): Promise<string> {
@@ -37,6 +36,7 @@ async function readSecret(token: string, name: string): Promise<string> {
 	})
 	const reply = await send({
 		method: 'GET',
+		redirect: 'error',
 		url: `${VAULT.api}/v4/secrets/${name}?${query.toString()}`,
 		headers: { authorization: `Bearer ${token}` },
 	})
@@ -51,15 +51,19 @@ async function readSecret(token: string, name: string): Promise<string> {
 
 export async function platformCredentials(
 	identity: RunIdentity,
+	protect: (secret: string) => void = maskSecret,
 ): Promise<PlatformCredentials> {
-	const token = await login(await identityToken(identity, VAULT.audience))
+	const token = await login(
+		await identityToken(identity, VAULT.audience, protect),
+	)
+	protect(token)
 	const [cloudflareToken, cloudflareAccount, statePassphrase] =
 		await Promise.all([
 			readSecret(token, PLATFORM_SECRETS.cloudflareToken),
 			readSecret(token, PLATFORM_SECRETS.cloudflareAccount),
 			readSecret(token, PLATFORM_SECRETS.statePassphrase),
 		])
-	maskSecret(cloudflareToken)
-	maskSecret(statePassphrase)
+	protect(cloudflareToken)
+	protect(statePassphrase)
 	return { cloudflareToken, cloudflareAccount, statePassphrase }
 }

@@ -60,5 +60,8 @@ export function readPullRequestEvent(): PullRequestEvent {
 			? 'this repository'
 			: 'a fork',
 		sender: decode.string(decode.record(event.sender, 'sender'), 'login'),
+		labels: decode
+			.records(pullRequest, 'labels')
+			.map(label => decode.string(label, 'name')),
 	}
 }

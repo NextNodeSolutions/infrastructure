@@ -26,11 +26,13 @@ export function takeRunIdentity(): RunIdentity {
 export async function identityToken(
 	identity: RunIdentity,
 	audience: string,
+	protect: (secret: string) => void = maskSecret,
 ): Promise<string> {
 	const url = new URL(identity.url)
 	url.searchParams.set('audience', audience)
 	const reply = await send({
 		method: 'GET',
+		redirect: 'error',
 		url: url.href,
 		headers: { authorization: `Bearer ${identity.token}` },
 	})
@@ -40,6 +42,6 @@ export async function identityToken(
 		)
 	}
 	const token = decode.string(fieldsOf(reply, 'GitHub'), 'value')
-	maskSecret(token)
+	protect(token)
 	return token
 }

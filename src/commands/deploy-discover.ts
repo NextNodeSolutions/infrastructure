@@ -10,7 +10,7 @@ import {
 	NOTHING_DECLARED,
 	renderRelease,
 } from '../domain/deploy-summary.ts'
-import { occasionOf } from '../domain/occasion.ts'
+import { isVaultVerification, occasionOf } from '../domain/occasion.ts'
 
 import { survey } from './deploy-survey.ts'
 
@@ -26,12 +26,15 @@ function nothing(summary: string): void {
 export async function deployDiscover(): Promise<void> {
 	const project = requiredVariable('GITHUB_WORKSPACE')
 	const event = readPullRequestEvent()
-	const api = takeGitHub(event)
+	if (isVaultVerification(event)) {
+		nothing('Nothing to deploy: this run verifies vault access.\n')
+		return
+	}
 	if (occasionOf(event) !== 'release') {
 		nothing(NOT_STANDING)
 		return
 	}
-	const surveyed = await survey(project, event, api)
+	const surveyed = await survey(project, event, takeGitHub(event))
 	if (!surveyed) {
 		nothing(NOTHING_DECLARED)
 		return

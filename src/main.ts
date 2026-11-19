@@ -6,6 +6,7 @@ import { deployBuild } from './commands/deploy-build.ts'
 import { deployDiscover } from './commands/deploy-discover.ts'
 import { deployPlan } from './commands/deploy-plan.ts'
 import { deployRelease } from './commands/deploy-release.ts'
+import { deployVerifyVault } from './commands/deploy-verify-vault.ts'
 import { discover } from './commands/discover.ts'
 import { causeOf, Refusal } from './domain/refusal.ts'
 
@@ -18,6 +19,7 @@ const COMMANDS: Record<string, () => Promise<void>> = {
 	'deploy-discover': deployDiscover,
 	'deploy-build': deployBuild,
 	'deploy-release': deployRelease,
+	'deploy-verify-vault': deployVerifyVault,
 }
 const USAGE_ERROR = 2
 const COMMAND_ARGUMENT = 2

@@ -66,10 +66,10 @@ stateDiagram-v2
 1. A merge moves the head of the **standing pull request**, the one pull request each repository keeps open from its default branch into a branch that never moves. A ruleset requires `Deploy` there, so the merge starts the run.
 2. **Discover** reads each `nextnode.toml` and compares the commit with the last deployment of each deployable that succeeded. It selects what the changes since then reach, and its summary gives the reason for each.
 3. **Build** installs, builds and bundles each selected deployable on its own runner, and leaves plain files.
-4. **Release** takes those files and deploys them: it creates the databases and buckets the file binds, applies the migrations, uploads the Worker and waits for it to answer, or publishes the package. It is the only job that holds credentials and it runs nothing of the project.
+4. **Release** takes those files and deploys them: it creates the databases and buckets the file binds, applies the migrations, uploads the Worker and waits for it to answer, or publishes the package. It runs nothing of the project.
 5. GitHub's environment of each deployable records what serves, with its address. A failure says its cause and the next action, and the next run deploys everything since the last success.
 
-On a pull request, `Deploy plan` shows the same selection before the merge. Why deployments run on a pull request, what each job holds and what each failure leaves are in [docs/deployment.md](docs/deployment.md).
+On a pull request, `Deploy plan` shows the same selection before the merge. The standing pull request can also run a vault access check with all deployment jobs skipped. Why deployments run on a pull request, what each job holds and what each failure leaves are in [docs/deployment.md](docs/deployment.md).
 
 ## What a project declares
 

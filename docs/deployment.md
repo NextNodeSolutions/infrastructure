@@ -37,17 +37,28 @@ Holding a run that a workflow token caused is the closed side of a choice. Unatt
 
 ## The jobs and what each holds
 
-| Workflow      | Runs on                                | Job                            | What it does with the project                  | What it holds                                            |
-| ------------- | -------------------------------------- | ------------------------------ | ---------------------------------------------- | -------------------------------------------------------- |
-| `Deploy plan` | A pull request into the default branch | Plan                           | Reads its files, runs its package manager      | A token that only reads                                  |
-|               |                                        | Open the standing pull request | Nothing: no checkout, no install               | A token that writes branches and pull requests           |
-| `Deploy`      | The standing pull request              | Discover                       | Reads its files, runs its package manager      | A token that only reads                                  |
-|               |                                        | Build, one per deployable      | Installs it, builds it, bundles it             | A token that only reads                                  |
-|               |                                        | Release, one per deployable    | Nothing: no checkout, no install, no execution | A token that records deployments, and the run's identity |
+| Workflow      | Runs on                                        | Job                            | What it does with the project                  | What it holds                                            |
+| ------------- | ---------------------------------------------- | ------------------------------ | ---------------------------------------------- | -------------------------------------------------------- |
+| `Deploy plan` | A pull request into the default branch         | Plan                           | Reads its files, runs its package manager      | A token that only reads                                  |
+|               |                                                | Open the standing pull request | Nothing: no checkout, no install               | A token that writes branches and pull requests           |
+| `Deploy`      | The standing pull request                      | Discover                       | Reads its files, runs its package manager      | A token that only reads                                  |
+|               |                                                | Build, one per deployable      | Installs it, builds it, bundles it             | A token that only reads                                  |
+|               |                                                | Release, one per deployable    | Nothing: no checkout, no install, no execution | A token that records deployments, and the run's identity |
+|               | Standing pull request with `verify-vault-only` | Verify vault access            | Nothing: no checkout, no install, no execution | A read-only repository token and the run's identity      |
 
 The split is the security model. A job either runs the project or holds something that writes, never both. Plan says on each pull request what a merge would deploy and why, so the reviewer reads the deployment before approving the change.
 
 On a pull request that is not the standing one, `Deploy` asks for no build and no release and ends green, and a Release job started anyway refuses before it reads anything.
+
+### Verifying vault access without deploying
+
+On an existing standing pull request, wait for any running or queued Deploy run to finish. Apply `verify-vault-only` and start a fresh pull request event by closing and reopening the same pull request. A rerun uses its original event and label snapshot. The label on its own starts no run. Do not approve an earlier run whose event lacks the label.
+
+The program reads the label from GitHub's event and selects the vault check. The workflow runs the isolated verifier on every Deploy pull request, and the program requests no credentials when the label is absent. The program requires the label on the standing pull request and checks that its head still matches the default branch tip. It reports its selection through a GitHub job output, which controls whether Discover runs. The Release command also refuses an event with that label. When selected, the check job succeeds or fails before Discover, Build and Release can run. It checks out only the infrastructure program at the workflow's commit and installs nothing. It uses the same GitHub identity and fixed platform vault reads as a Worker release, discards the returned values and reports only fixed text. It creates no GitHub deployment and contacts neither Cloudflare nor the registry. Remove the label after collecting the result so the next default branch update can deploy.
+
+The vault requires both `workflow_ref` and `job_workflow_ref` to name `NextNodeSolutions/infrastructure/.github/workflows/deploy.yml@refs/heads/main` and requires a pull request from `main` into `deployments`. A separate workflow, a manual dispatch or a feature branch cannot supply these claims. Live proof needs the reviewed change on infrastructure `main` and a repository enrolled in the Deploy ruleset.
+
+The check covers the platform credentials a Worker release reads from the platform vault root. Project-specific vaults and development environments are outside this workflow's contract. The production declaration accepts plain `[vars]`. The workflow has no app vault lookup and does not set Worker secrets. An app that needs runtime secrets requires a separate, scoped binding plan before rollout.
 
 ## What a run deploys
 
@@ -238,7 +249,9 @@ A Worker made by hand or by core's old pipeline may already serve under the name
 1. Add the tag `nextnode:repository=<repository>`, with the repository's name in lowercase, to the Worker in Cloudflare. The refusal names the exact tag. Through the API it is `PATCH /accounts/<account>/workers/scripts/<worker>/script-settings` with the Worker's current tags plus this one, since the call replaces the list.
 2. Re-run the refused release. It reserves the name, uploads over the Worker and keeps the tag.
 
-The old version serves until the release replaces it, and a custom domain already attached to that Worker stays attached. A Worker under another name is not moved: the release creates a new one, and a person deletes the old one once traffic has moved.
+The old version serves until the release replaces it, and a custom domain already attached to that Worker stays attached. A Worker under another name cannot be adopted by tagging it. A release for the new name refuses while the custom domain points at the old Worker.
+
+The plan can show derived names but cannot prove account ownership. Before handing over an existing Worker, compare the derived Worker and D1 names with the live custom domain target, Worker version and D1 binding UUID. The release imports D1 by exact derived name and uses the Cloudflare UUID it found. A different database name can resolve to a new database. If either name differs, stop before rollout. The infrastructure maintainers and account owner must agree on a supported handoff that preserves the live Worker and database UUID, then verify ownership claims and reconcile any old state that still manages the resource. The application declaration never takes an override for these identities. Keep the rollout separate and compare the same domain, Worker and D1 UUID again after it.
 
 ## Trust boundary
 
@@ -250,16 +263,16 @@ The boundary stands between a repository and the platform, and so between one re
 
 What the trusted side holds:
 
-| Credential                                                      | Held by                                              | Lives               | Reaches                                                       |
-| --------------------------------------------------------------- | ---------------------------------------------------- | ------------------- | ------------------------------------------------------------- |
-| A repository token that only reads                              | Plan, Discover, Build                                | The job             | Repository content, deployment records and release-run proofs |
-| A repository token that writes branches and pull requests       | Open the standing pull request                       | The job             | The repository                                                |
-| A repository token that records deployments                     | Release                                              | The job             | The repository's deployment records                           |
-| The run's identity, which asks GitHub for tokens naming the run | Release, inside the program only                     | The job             | Any service that admits this run                              |
-| The vault's access token                                        | Release of a Worker                                  | Minutes             | The platform's secrets, read only                             |
-| The Cloudflare token and the state passphrase                   | Release of a Worker                                  | Stored in the vault | The whole Cloudflare account, and every project's state       |
-| A registry token                                                | Release of a package                                 | Minutes             | One package                                                   |
-| A signing certificate for the run, with its key                 | Release of a public package, inside the program only | Minutes             | A signature that names this run                               |
+| Credential                                                      | Held by                                                  | Lives               | Reaches                                                       |
+| --------------------------------------------------------------- | -------------------------------------------------------- | ------------------- | ------------------------------------------------------------- |
+| A repository token that only reads                              | Plan, Discover, Build                                    | The job             | Repository content, deployment records and release-run proofs |
+| A repository token that writes branches and pull requests       | Open the standing pull request                           | The job             | The repository                                                |
+| A repository token that records deployments                     | Release                                                  | The job             | The repository's deployment records                           |
+| The run's identity, which asks GitHub for tokens naming the run | Release and Verify vault access, inside the program only | The job             | Any service that admits this run                              |
+| The vault's access token                                        | Release of a Worker, Verify vault access                 | Minutes             | The platform's secrets, read only                             |
+| The Cloudflare token and the state passphrase                   | Release of a Worker                                      | Stored in the vault | The whole Cloudflare account, and every project's state       |
+| A registry token                                                | Release of a package                                     | Minutes             | One package                                                   |
+| A signing certificate for the run, with its key                 | Release of a public package, inside the program only     | Minutes             | A signature that names this run                               |
 
 The Cloudflare token reaches the whole account, so the program is what confines a project to its own resources:
 
@@ -306,6 +319,7 @@ A guarantee is checked by an attack that must fail, on the canaries, after any c
 | Competing repositories cannot reserve the same resource | Start concurrent create-only claims for the same name under different owners. Exactly one succeeds and the other refuses without replacing it.                                                         |
 | A tarball cannot configure authenticated npm            | Pack a manifest with `publishConfig` containing proxy and TLS settings, then a clean `package/package.json` followed by an `other/package.json` carrying them. Each refuses before requesting a token. |
 | A project cannot bind the platform's state bucket       | Declare an R2 binding whose derived name is the state bucket. Discover refuses with an annotation on the file, before any reservation.                                                                 |
+| Vault verification cannot deploy                        | Run the check on the standing pull request. Verify the fixed summary, skipped Discover, Build and Release jobs, and no new deployment record.                                                          |
 | The vault admits the Deploy workflow alone              | The single-package canary keeps a workflow of its own that asks for the Deploy login and passes only when the vault refuses.                                                                           |
 | A private repository's name stays out of the public log | Publish from the workspace canary. Its summary gives the provenance as none and its log has no signing step.                                                                                           |
 | An old run deploys nothing over a newer commit          | Re-run the failed or finished Release job of an older run after a newer one succeeded. It refuses and records nothing.                                                                                 |
