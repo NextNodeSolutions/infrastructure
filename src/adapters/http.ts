@@ -12,6 +12,7 @@ export type Request = {
 	readonly url: string
 	readonly headers: Readonly<Record<string, string>>
 	readonly body?: Fields | undefined
+	readonly redirect?: RequestInit['redirect']
 }
 
 type Content = Pick<RequestInit, 'headers' | 'body'>
@@ -36,6 +37,7 @@ export async function send(request: Request): Promise<Reply> {
 	const response = await fetch(request.url, {
 		...contentOf(request),
 		method: request.method,
+		redirect: request.redirect ?? 'follow',
 		signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
 	})
 	return { status: response.status, text: await response.text() }

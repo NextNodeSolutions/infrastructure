@@ -13,7 +13,10 @@ import { takeRunIdentity } from '../adapters/run-identity.ts'
 import { installProfileOf } from '../domain/deploy-commands.ts'
 import { short } from '../domain/deploy-selection.ts'
 import { renderFailure, renderReleased } from '../domain/deploy-summary.ts'
-import { refuseUnlessStanding } from '../domain/occasion.ts'
+import {
+	isVaultVerification,
+	refuseUnlessStanding,
+} from '../domain/occasion.ts'
 import { causeOf } from '../domain/refusal.ts'
 import { runUrl } from '../domain/run.ts'
 
@@ -33,9 +36,12 @@ import type { Released } from '../domain/deploy-summary.ts'
 export async function deployRelease(): Promise<void> {
 	const workspace = requiredVariable('GITHUB_WORKSPACE')
 	const event = readPullRequestEvent()
+	refuseUnlessStanding(event)
+	if (isVaultVerification(event)) {
+		throw new Error('A vault verification run cannot release')
+	}
 	const api = takeGitHub(event)
 	const identity = takeRunIdentity()
-	refuseUnlessStanding(event)
 	const requested = requestedDeployable()
 	const root = programRoot()
 	await refuseStale(

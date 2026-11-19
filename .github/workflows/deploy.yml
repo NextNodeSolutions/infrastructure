@@ -26,8 +26,32 @@ env:
     ARTIFACT: .nextnode-artifact
 
 jobs:
+    verify-vault:
+        name: Verify vault access
+        if: contains(github.event.pull_request.labels.*.name, 'verify-vault-only')
+        runs-on: ubuntu-24.04
+        timeout-minutes: 5
+        permissions:
+            contents: read
+            id-token: write
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  repository: ${{ job.workflow_repository }}
+                  ref: ${{ job.workflow_sha }}
+                  path: ${{ env.PROGRAM }}
+                  persist-credentials: false
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: ${{ env.PROGRAM }}/.node-version
+            - env:
+                  GITHUB_TOKEN: ${{ github.token }}
+              run: node "$PROGRAM/src/cli.ts" deploy-verify-vault
+
     discover:
         name: Discover
+        needs: verify-vault
+        if: ${{ !cancelled() && needs.verify-vault.result == 'skipped' }}
         runs-on: ubuntu-24.04
         timeout-minutes: 10
         permissions:
@@ -61,7 +85,7 @@ jobs:
     build:
         name: Build ${{ matrix.name }}
         needs: discover
-        if: needs.discover.outputs.builds != '[]'
+        if: ${{ !cancelled() && needs.discover.result == 'success' && needs.discover.outputs.builds != '[]' }}
         runs-on: ubuntu-24.04
         timeout-minutes: 30
         strategy:

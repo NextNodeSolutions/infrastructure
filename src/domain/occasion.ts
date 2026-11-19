@@ -2,6 +2,7 @@
 // what a ruleset-required workflow can run on after a merge: every merge moves that pull
 // request's head, and GitHub then starts the workflow on it.
 export const DEPLOYMENTS_BRANCH = 'deployments'
+export const VERIFY_VAULT_LABEL = 'verify-vault-only'
 
 export const VISIBILITIES = ['public', 'private', 'internal'] as const
 
@@ -18,6 +19,7 @@ export type PullRequestEvent = {
 	readonly headSha: string
 	readonly origin: 'this repository' | 'a fork'
 	readonly sender: string
+	readonly labels: readonly string[]
 }
 
 const DEPENDABOT = 'dependabot[bot]'
@@ -37,9 +39,11 @@ export function occasionOf(event: PullRequestEvent): Occasion {
 	)
 }
 
-// A release serves the standing pull request and refuses every other, before anything
-// of the project is read and before any credential is asked for. Discovery already asks
-// for no release elsewhere: this holds when a job is started without it.
+export function isVaultVerification(event: PullRequestEvent): boolean {
+	return event.labels.includes(VERIFY_VAULT_LABEL)
+}
+
+// Discovery skips releases outside the standing pull request, and the release checks again before reading the project.
 export function refuseUnlessStanding(event: PullRequestEvent): void {
 	if (occasionOf(event) === 'release') return
 	throw new Error(
